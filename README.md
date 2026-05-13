@@ -127,7 +127,8 @@ Evaluate it on the Speech Commands test split:
 python evaluate_checkpoint.py \
   --checkpoint pretrained/pure_rqf_mfcc_tbptt_seed0.pt \
   --split test \
-  --data-root data
+  --data-root data \
+  --output-json outputs/pure_rqf_mfcc_tbptt_seed0_test_metrics.json
 ```
 
 For a quick loader/model smoke test without downloading Speech Commands:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import random
+import wave
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -160,6 +161,34 @@ class SpeechCommandsSubset(Dataset):
     def __len__(self) -> int:
         return len(self.indices)
 
+    def _metadata(self, dataset_index: int) -> tuple[Path, str]:
+        item = Path(self.base._walker[dataset_index])  # noqa: SLF001 - torchaudio public pattern
+        if not item.is_absolute():
+            item = Path(self.base._archive) / item  # noqa: SLF001 - torchaudio public pattern
+        return item, item.parent.name
+
+    @staticmethod
+    def _load_waveform(path: Path) -> tuple[torch.Tensor, int]:
+        with wave.open(str(path), "rb") as wav:
+            sample_rate = wav.getframerate()
+            channels = wav.getnchannels()
+            sample_width = wav.getsampwidth()
+            frames = bytearray(wav.readframes(wav.getnframes()))
+
+        if sample_width == 1:
+            data = torch.frombuffer(frames, dtype=torch.uint8).clone().float()
+            data = (data - 128.0) / 128.0
+        elif sample_width == 2:
+            data = torch.frombuffer(frames, dtype=torch.int16).clone().float()
+            data = data / 32768.0
+        elif sample_width == 4:
+            data = torch.frombuffer(frames, dtype=torch.int32).clone().float()
+            data = data / 2147483648.0
+        else:
+            raise ValueError(f"unsupported WAV sample width {sample_width} bytes for {path}")
+        waveform = data.reshape(-1, channels).transpose(0, 1).contiguous()
+        return waveform, sample_rate
+
     def _prepare_waveform(self, waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
         waveform = waveform.mean(dim=0, keepdim=True)
         if sample_rate != self.sample_rate:
@@ -186,7 +215,8 @@ class SpeechCommandsSubset(Dataset):
         return x.float()
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        waveform, sample_rate, label, *_ = self.base[self.indices[index]]
+        path, label = self._metadata(self.indices[index])
+        waveform, sample_rate = self._load_waveform(path)
         return self._features(waveform, sample_rate), torch.tensor(self.class_to_index[label])
 
 
