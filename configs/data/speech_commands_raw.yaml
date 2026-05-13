@@ -1,0 +1,32 @@
+name: speech_commands
+variant: raw
+root: data
+download: true
+classes:
+  - yes
+  - no
+  - up
+  - down
+  - left
+  - right
+  - on
+  - off
+  - stop
+  - go
+sample_rate: 16000
+sequence_length: 16000
+feature_dim: 1
+normalize: true
+compute_train_stats: true
+stats_max_samples: null
+train_split: 0.7
+val_split: 0.15
+test_split: 0.15
+split_seed: 0
+batch_size: ${training.batch_size}
+drop_last_train: true
+drop_last_eval: false
+use_synthetic: false
+synthetic_train_size: 256
+synthetic_val_size: 64
+synthetic_test_size: 64

@@ -1,0 +1,7 @@
+numpy
+torch
+torchaudio
+hydra-core
+omegaconf
+tqdm
+triton; platform_system == "Linux"

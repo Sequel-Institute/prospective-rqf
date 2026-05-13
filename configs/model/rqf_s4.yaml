@@ -1,0 +1,126 @@
+name: rqf_s4
+encoder: rqf_s4
+depth: 2
+hidden_width: 48
+output_dims: 64
+skip_connection: false
+prospective_input: false
+prospective_mode: tau
+prospective_tau: null
+
+encoder_kwargs:
+  num_filters: 32
+  samp_frequency: 16000.0
+  min_freq: 1.0
+  max_freq: 8000.0
+  tau: 0.000125
+  min_gamma: 0.001
+  max_gamma: 1.0
+  learn_tau: false
+  discretization: zoh
+  activation: gelu
+  dropout: 0.0
+  bidirectional: false
+  expand_factor: 2
+  norm_type: batch
+  readout_mode: real
+  num_oscillators: 1
+  use_glu: true
+  clamp_gamma: true
+  c_projection: true
+  sigma_init: 0.1
+
+mfcc_encoder_kwargs:
+  samp_frequency: 160.0
+  min_freq: 0.01
+  max_freq: 80.0
+  tau: 0.0625
+
+classifier:
+  hidden_dims: 256
+  activation: gelu
+  dropout: 0.1
+
+filter_scales:
+  - count: 4
+    min_freq: 1.0
+    max_freq: 8.0
+    min_gamma: 0.0
+    max_gamma: 0.006244
+  - count: 4
+    min_freq: 8.0
+    max_freq: 30.0
+    min_gamma: 0.00002
+    max_gamma: 0.02302
+  - count: 4
+    min_freq: 30.0
+    max_freq: 100.0
+    min_gamma: 0.000277
+    max_gamma: 0.072821
+  - count: 4
+    min_freq: 100.0
+    max_freq: 300.0
+    min_gamma: 0.00307
+    max_gamma: 0.190689
+  - count: 4
+    min_freq: 300.0
+    max_freq: 800.0
+    min_gamma: 0.026653
+    max_gamma: 0.38587
+  - count: 4
+    min_freq: 800.0
+    max_freq: 2000.0
+    min_gamma: 0.153267
+    max_gamma: 0.611015
+  - count: 4
+    min_freq: 2000.0
+    max_freq: 4500.0
+    min_gamma: 0.462971
+    max_gamma: 0.779458
+  - count: 4
+    min_freq: 4500.0
+    max_freq: 8000.0
+    min_gamma: 0.727746
+    max_gamma: 0.862697
+
+mfcc_filter_scales:
+  - count: 4
+    min_freq: 0.01
+    max_freq: 0.08
+    min_gamma: 0.003919
+    max_gamma: 0.031400
+  - count: 4
+    min_freq: 0.08
+    max_freq: 0.3
+    min_gamma: 0.030928
+    max_gamma: 0.117001
+  - count: 4
+    min_freq: 0.3
+    max_freq: 1.0
+    min_gamma: 0.111135
+    max_gamma: 0.365525
+  - count: 4
+    min_freq: 1.0
+    max_freq: 3.0
+    min_gamma: 0.324768
+    max_gamma: 0.762381
+  - count: 4
+    min_freq: 3.0
+    max_freq: 8.0
+    min_gamma: 0.692136
+    max_gamma: 0.952891
+  - count: 4
+    min_freq: 8.0
+    max_freq: 20.0
+    min_gamma: 0.956786
+    max_gamma: 0.991992
+  - count: 4
+    min_freq: 20.0
+    max_freq: 45.0
+    min_gamma: 0.999494
+    max_gamma: 0.999612
+  - count: 4
+    min_freq: 45.0
+    max_freq: 80.0
+    min_gamma: 0.999493
+    max_gamma: 0.999999

@@ -1,0 +1,98 @@
+name: pure_rqf
+encoder: pure_rqf
+depth: 2
+hidden_width: 48
+output_dims: 48
+skip_connection: false
+prospective_input: false
+prospective_mode: tau
+prospective_tau: null
+
+encoder_kwargs:
+  samp_frequency: 16000.0
+  min_freq: 1.0
+  max_freq: 3200.0
+  tau: 0.0003125
+  min_gamma: 0.001
+  max_gamma: 0.85
+  learn_tau: false
+  discretization: zoh
+  activation: split_tanh
+  complex_weights: true
+  clamp_gamma: true
+  norm_type: none
+
+mfcc_encoder_kwargs:
+  samp_frequency: 160.0
+  min_freq: 0.01
+  max_freq: 32.0
+  tau: 0.03125
+
+classifier:
+  hidden_dims: 256
+  activation: relu
+  dropout: 0.1
+
+filter_scales:
+  - count: 8
+    min_freq: 1.0
+    max_freq: 20.0
+    min_gamma: 0.000002
+    max_gamma: 0.037786
+  - count: 8
+    min_freq: 20.0
+    max_freq: 100.0
+    min_gamma: 0.00077
+    max_gamma: 0.164124
+  - count: 8
+    min_freq: 100.0
+    max_freq: 400.0
+    min_gamma: 0.018737
+    max_gamma: 0.439901
+  - count: 8
+    min_freq: 400.0
+    max_freq: 1000.0
+    min_gamma: 0.213561
+    max_gamma: 0.662561
+  - count: 8
+    min_freq: 1000.0
+    max_freq: 2000.0
+    min_gamma: 0.546172
+    max_gamma: 0.797036
+  - count: 8
+    min_freq: 2000.0
+    max_freq: 3200.0
+    min_gamma: 0.753227
+    max_gamma: 0.862697
+
+mfcc_filter_scales:
+  - count: 8
+    min_freq: 0.01
+    max_freq: 0.2
+    min_gamma: 0.0
+    max_gamma: 0.07
+  - count: 8
+    min_freq: 0.2
+    max_freq: 1.0
+    min_gamma: 0.0
+    max_gamma: 0.28
+  - count: 8
+    min_freq: 1.0
+    max_freq: 4.0
+    min_gamma: 0.07
+    max_gamma: 0.61
+  - count: 8
+    min_freq: 4.0
+    max_freq: 10.0
+    min_gamma: 0.46
+    max_gamma: 0.80
+  - count: 8
+    min_freq: 10.0
+    max_freq: 20.0
+    min_gamma: 0.75
+    max_gamma: 0.89
+  - count: 8
+    min_freq: 20.0
+    max_freq: 32.0
+    min_gamma: 0.87
+    max_gamma: 0.93

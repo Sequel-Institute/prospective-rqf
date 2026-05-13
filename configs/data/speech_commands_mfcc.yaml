@@ -1,0 +1,37 @@
+name: speech_commands
+variant: mfcc
+root: data
+download: true
+classes:
+  - yes
+  - no
+  - up
+  - down
+  - left
+  - right
+  - on
+  - off
+  - stop
+  - go
+sample_rate: 16000
+effective_sample_rate: 160.0
+sequence_length: 161
+feature_dim: 20
+normalize: true
+compute_train_stats: true
+stats_max_samples: null
+train_split: 0.7
+val_split: 0.15
+test_split: 0.15
+split_seed: 0
+batch_size: ${training.batch_size}
+drop_last_train: true
+drop_last_eval: false
+use_synthetic: false
+synthetic_train_size: 256
+synthetic_val_size: 64
+synthetic_test_size: 64
+mfcc:
+  n_mfcc: 20
+  n_fft: 200
+  n_mels: 64

@@ -1,0 +1,19 @@
+defaults:
+  - data: speech_commands_raw
+  - model: pure_rqf
+  - training: full_bptt
+  - _self_
+
+seed: 0
+device: auto
+num_workers: 4
+output_dir: ${hydra:runtime.output_dir}
+checkpoint_dir: checkpoints
+dry_run: false
+
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.name}_${data.variant}_seed${seed}
+  sweep:
+    dir: outputs/multirun/${now:%Y-%m-%d}
+    subdir: ${hydra.job.num}_${model.name}_${data.variant}_seed${seed}

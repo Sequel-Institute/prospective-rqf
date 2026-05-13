@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Experiment outputs
+/outputs/
+/checkpoints/
+/data/
+uv.lock
+*.pt
+*.ckpt
+.DS_Store

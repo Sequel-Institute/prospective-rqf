@@ -1,0 +1,28 @@
+name: s5
+encoder: s5
+depth: 2
+hidden_width: 48
+output_dims: 64
+skip_connection: false
+prospective_input: false
+
+encoder_kwargs:
+  d_state: 48
+  blocks: 8
+  dropout: 0.0
+  dt_min: 0.001
+  dt_max: 0.1
+  discretization: zoh
+  activation: half_glu1
+  conj_sym: true
+  bidirectional: false
+  clip_eigs: false
+  step_rescale: 1.0
+  use_parallel_scan: false
+  prenorm: true
+  norm_type: batch
+
+classifier:
+  hidden_dims: 256
+  activation: gelu
+  dropout: 0.1
