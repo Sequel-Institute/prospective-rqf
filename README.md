@@ -98,4 +98,42 @@ Each run writes:
 - `checkpoints/best_val_acc.pt`
 - `metrics.json`
 
-Checkpoints used for the submitted tables will be added separately.
+Additional checkpoints used for the submitted tables can be added under
+`pretrained/` using the same format.
+
+## Checkpoint Evaluation
+
+The repository includes one example checkpoint:
+
+```text
+pretrained/pure_rqf_mfcc_tbptt_seed0.pt
+```
+
+It corresponds to:
+
+```text
+model=pure_rqf
+data=speech_commands_mfcc
+training=tbptt_local_loss
+model.depth=4
+model.skip_connection=false
+model.prospective_input=false
+seed=0
+```
+
+Evaluate it on the Speech Commands test split:
+
+```bash
+python evaluate_checkpoint.py \
+  --checkpoint pretrained/pure_rqf_mfcc_tbptt_seed0.pt \
+  --split test \
+  --data-root data
+```
+
+For a quick loader/model smoke test without downloading Speech Commands:
+
+```bash
+python evaluate_checkpoint.py \
+  --checkpoint pretrained/pure_rqf_mfcc_tbptt_seed0.pt \
+  --synthetic
+```

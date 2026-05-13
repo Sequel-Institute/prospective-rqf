@@ -224,4 +224,5 @@ __marimo__/
 uv.lock
 *.pt
 *.ckpt
+!/pretrained/*.pt
 .DS_Store
