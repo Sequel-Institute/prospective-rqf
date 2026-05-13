@@ -64,7 +64,7 @@ def main() -> None:
     args = parse_args()
     checkpoint = load_checkpoint(args.checkpoint)
     overrides = ["output_dir=outputs/evaluate_checkpoint"]
-    overrides += checkpoint_overrides(checkpoint) + list(args.override)
+    overrides += checkpoint_overrides(checkpoint)
     if args.batch_size is not None:
         overrides.append(f"data.batch_size={args.batch_size}")
     if args.data_root is not None:
@@ -74,6 +74,7 @@ def main() -> None:
         overrides.append("data.synthetic_train_size=64")
         overrides.append("data.synthetic_val_size=32")
         overrides.append("data.synthetic_test_size=32")
+    overrides += list(args.override)
 
     config_dir = Path(__file__).resolve().parent / "configs"
     with initialize_config_dir(version_base="1.3", config_dir=str(config_dir)):

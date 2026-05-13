@@ -98,7 +98,7 @@ pretrained/checkpoint_manifest.json
 
 ## Checkpoint Evaluation
 
-The repository includes seed-0 MFCC checkpoints for Pure RQF and RQF-S4.
+The repository includes seed-0 raw-waveform and MFCC checkpoints for Pure RQF and RQF-S4.
 Model sizes are:
 
 ```text
@@ -110,10 +110,12 @@ L = 6 recurrent layers
 Coverage:
 
 ```text
-Pure RQF full BPTT:       S/M/L, prospective and non-prospective, residual and no-residual
-Pure RQF TBPTT(1):        S/M/L, prospective and non-prospective, no-residual
-RQF-S4 full BPTT:         S/M/L residual, plus available M no-residual runs
-RQF-S4 TBPTT(1):          available M no-residual runs
+Pure RQF raw full BPTT:   S/M/L, prospective and non-prospective, residual and no-residual
+Pure RQF MFCC full BPTT:  S/M/L, prospective and non-prospective, residual and no-residual
+Pure RQF MFCC TBPTT(1):   S/M/L, prospective and non-prospective, no-residual
+RQF-S4 raw full BPTT:     S/M/L, prospective and non-prospective, residual and no-residual
+RQF-S4 MFCC full BPTT:    S/M/L residual, plus available M no-residual runs
+RQF-S4 MFCC TBPTT(1):     available M no-residual runs
 ```
 
 The checkpoint filenames encode model, input representation, training mode,
@@ -121,7 +123,9 @@ size, residual flag, prospective flag, and seed:
 
 ```text
 pretrained/pure_rqf_mfcc_full_M_nores_p_seed0.pt
+pretrained/pure_rqf_raw_full_L_res_p_seed0.pt
 pretrained/pure_rqf_mfcc_tbptt_S_nores_np_seed0.pt
+pretrained/rqf_s4_raw_full_M_nores_np_seed0.pt
 pretrained/rqf_s4_mfcc_full_L_res_p_seed0.pt
 pretrained/rqf_s4_mfcc_tbptt_M_nores_p_seed0.pt
 ```
