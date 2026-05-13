@@ -42,7 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint",
         type=Path,
-        default=Path("pretrained/pure_rqf_mfcc_tbptt_seed0.pt"),
+        default=Path("pretrained/pure_rqf_mfcc_tbptt_S_nores_p_seed0.pt"),
         help="Path to a checkpoint produced by train.py or a packaged checkpoint.",
     )
     parser.add_argument("--split", choices=("val", "test"), default="test")

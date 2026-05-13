@@ -11,7 +11,6 @@ The code includes:
 
 - standalone Pure RQF encoders;
 - RQF-S4 encoders;
-- S4D and S5 full-BPTT baselines;
 - Hydra configs for raw waveform and MFCC Speech Commands inputs;
 - Hydra configs for full BPTT and TBPTT(1) local per-step loss;
 - a simple PyTorch training script.
@@ -31,10 +30,8 @@ pip install -r requirements.txt
 This uses synthetic data and only checks that the selected model/config builds and trains for one epoch:
 
 ```bash
-python train.py data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=pure_rqf model.depth=2
-python train.py data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=rqf_s4 model.depth=2
-python train.py data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=s4d model.depth=2 training=full_bptt
-python train.py data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=s5 model.depth=2 training=full_bptt
+python train.py data=speech_commands_mfcc data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=pure_rqf model.depth=2
+python train.py data=speech_commands_mfcc data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=rqf_s4 model.depth=2
 ```
 
 ## Main RQF Grids
@@ -83,15 +80,6 @@ python train.py -m model=rqf_s4 data=speech_commands_mfcc training=tbptt_local_l
   model.depth=2,4,6 model.prospective_input=false,true model.skip_connection=false,true seed=0
 ```
 
-## S4D and S5 Baselines
-
-The baseline S4D and S5 configs are exposed for full BPTT only:
-
-```bash
-python train.py -m model=s4d,s5 data=speech_commands_raw,speech_commands_mfcc training=full_bptt \
-  model.depth=2,4,6 model.skip_connection=false,true seed=0
-```
-
 ## Outputs
 
 Each run writes:
@@ -102,7 +90,7 @@ Each run writes:
 - `metrics.json`
 
 Packaged checkpoints are stored under `pretrained/`. Metadata, source run IDs,
-Hydra overrides, and lightweight test-evaluation smoke metrics are listed in:
+source validation/test metrics, and Hydra overrides are listed in:
 
 ```text
 pretrained/checkpoint_manifest.json
@@ -110,18 +98,32 @@ pretrained/checkpoint_manifest.json
 
 ## Checkpoint Evaluation
 
-The repository includes seed-0 checkpoints for representative Pure RQF,
-RQF-S4, S4D, and S5 configurations:
+The repository includes seed-0 MFCC checkpoints for Pure RQF and RQF-S4.
+Model sizes are:
 
 ```text
-pretrained/pure_rqf_mfcc_full_np_seed0.pt
-pretrained/pure_rqf_mfcc_full_p_seed0.pt
-pretrained/pure_rqf_mfcc_tbptt_p_seed0.pt
-pretrained/rqf_s4_mfcc_full_res_np_seed0.pt
-pretrained/rqf_s4_mfcc_full_res_p_seed0.pt
-pretrained/rqf_s4_mfcc_tbptt_p_seed0.pt
-pretrained/s4d_raw_full_np_seed0.pt
-pretrained/s5_mfcc_full_np_seed0.pt
+S = 2 recurrent layers
+M = 4 recurrent layers
+L = 6 recurrent layers
+```
+
+Coverage:
+
+```text
+Pure RQF full BPTT:       S/M/L, prospective and non-prospective, residual and no-residual
+Pure RQF TBPTT(1):        S/M/L, prospective and non-prospective, no-residual
+RQF-S4 full BPTT:         S/M/L residual, plus available M no-residual runs
+RQF-S4 TBPTT(1):          available M no-residual runs
+```
+
+The checkpoint filenames encode model, input representation, training mode,
+size, residual flag, prospective flag, and seed:
+
+```text
+pretrained/pure_rqf_mfcc_full_M_nores_p_seed0.pt
+pretrained/pure_rqf_mfcc_tbptt_S_nores_np_seed0.pt
+pretrained/rqf_s4_mfcc_full_L_res_p_seed0.pt
+pretrained/rqf_s4_mfcc_tbptt_M_nores_p_seed0.pt
 ```
 
 Each checkpoint stores its own Hydra overrides. Evaluate one checkpoint on the
@@ -129,10 +131,10 @@ Speech Commands test split:
 
 ```bash
 python evaluate_checkpoint.py \
-  --checkpoint pretrained/rqf_s4_mfcc_full_res_p_seed0.pt \
+  --checkpoint pretrained/rqf_s4_mfcc_full_M_res_p_seed0.pt \
   --split test \
   --data-root data \
-  --output-json outputs/rqf_s4_mfcc_full_res_p_seed0_test_metrics.json
+  --output-json outputs/rqf_s4_mfcc_full_M_res_p_seed0_test_metrics.json
 ```
 
 Evaluate every packaged checkpoint:
@@ -148,6 +150,6 @@ For a quick loader/model smoke test without downloading Speech Commands:
 
 ```bash
 python evaluate_checkpoint.py \
-  --checkpoint pretrained/rqf_s4_mfcc_full_res_p_seed0.pt \
+  --checkpoint pretrained/rqf_s4_mfcc_full_M_res_p_seed0.pt \
   --synthetic
 ```

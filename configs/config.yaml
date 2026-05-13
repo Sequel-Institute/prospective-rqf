@@ -6,7 +6,7 @@ defaults:
 
 seed: 0
 device: auto
-num_workers: 4
+num_workers: 0
 output_dir: ${hydra:runtime.output_dir}
 checkpoint_dir: checkpoints
 dry_run: false

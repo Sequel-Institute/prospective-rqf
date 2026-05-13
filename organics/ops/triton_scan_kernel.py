@@ -63,7 +63,6 @@ Example:
 
 References:
     - Blelloch (1990): "Prefix Sums and Their Applications"
-    - S5 Paper: "Simplified State Space Layers for Sequence Modeling"
     - Mamba: "Mamba: Linear-Time Sequence Modeling with Selective State Spaces"
 """
 

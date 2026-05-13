@@ -17,8 +17,6 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 from organics.embedding.rqf import PureRQFEncoder, S4RQFEncoder
-from organics.embedding.s4d import S4DEncoder
-from organics.embedding.s5 import S5Encoder
 
 
 class SequenceClassifier(nn.Module):
@@ -253,10 +251,6 @@ def variant_filter_scales(cfg: DictConfig) -> list[dict[str, Any]] | None:
 def validate_cfg(cfg: DictConfig) -> None:
     if cfg.training.per_step_loss and cfg.training.scan_grad_mode != "tbptt1":
         raise ValueError("per_step_loss=true requires training.scan_grad_mode=tbptt1")
-    if cfg.model.encoder in {"s4d", "s5"} and cfg.training.scan_grad_mode != "full":
-        raise ValueError("S4D and S5 configs in this release expose full BPTT only")
-    if cfg.model.encoder in {"s4d", "s5"} and cfg.model.prospective_input:
-        raise ValueError("S4D and S5 configs in this release are non-prospective baselines")
 
 
 def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:
@@ -296,27 +290,6 @@ def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:
             tbptt_delayed_input_mode=str(
                 getattr(cfg.training, "tbptt_delayed_input_mode", "strict")
             ),
-            **kwargs,
-        )
-    elif cfg.model.encoder == "s4d":
-        encoder = S4DEncoder(
-            input_dims=input_dims,
-            output_dims=output_dims,
-            d_model=hidden_width,
-            num_layers=depth,
-            skip_connection=skip_connection,
-            prospective_input=False,
-            **kwargs,
-        )
-    elif cfg.model.encoder == "s5":
-        encoder = S5Encoder(
-            input_dims=input_dims,
-            output_dims=output_dims,
-            d_model=hidden_width,
-            num_layers=depth,
-            skip_connection=skip_connection,
-            prospective_input=False,
-            scan_grad_mode="full",
             **kwargs,
         )
     else:

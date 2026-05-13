@@ -28,7 +28,6 @@ Mathematical background:
 
 References:
     - Blelloch (1990): "Prefix Sums and Their Applications"
-    - S5 Paper: "Simplified State Space Layers for Sequence Modeling" (ICLR 2023)
 """
 
 import math
