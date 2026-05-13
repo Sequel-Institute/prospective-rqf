@@ -2,7 +2,10 @@ Patent notice: this repository includes patent-protected methods and is shared f
 
 # Recursive Quadrature Filter Experiments
 
-This repository contains a compact training entrypoint for the Speech Commands experiments based on Recursive Quadrature Filters (RQFs), prospective input, and local TBPTT(1) loss. It is intentionally minimal: it includes the model code, Hydra configurations, and a direct training script, but not the larger infrastructure used to run the full sweep.
+This repository contains the training and evaluation code for the Speech
+Commands experiments based on Recursive Quadrature Filters (RQFs), prospective
+input, and local TBPTT(1) loss. It includes the model code, Hydra
+configurations, packaged checkpoints, and direct training/evaluation scripts.
 
 The code includes:
 
@@ -98,43 +101,53 @@ Each run writes:
 - `checkpoints/best_val_acc.pt`
 - `metrics.json`
 
-Additional checkpoints used for the submitted tables can be added under
-`pretrained/` using the same format.
+Packaged checkpoints are stored under `pretrained/`. Metadata, source run IDs,
+Hydra overrides, and lightweight test-evaluation smoke metrics are listed in:
+
+```text
+pretrained/checkpoint_manifest.json
+```
 
 ## Checkpoint Evaluation
 
-The repository includes one example checkpoint:
+The repository includes seed-0 checkpoints for representative Pure RQF,
+RQF-S4, S4D, and S5 configurations:
 
 ```text
-pretrained/pure_rqf_mfcc_tbptt_seed0.pt
+pretrained/pure_rqf_mfcc_full_np_seed0.pt
+pretrained/pure_rqf_mfcc_full_p_seed0.pt
+pretrained/pure_rqf_mfcc_tbptt_p_seed0.pt
+pretrained/rqf_s4_mfcc_full_res_np_seed0.pt
+pretrained/rqf_s4_mfcc_full_res_p_seed0.pt
+pretrained/rqf_s4_mfcc_tbptt_p_seed0.pt
+pretrained/s4d_raw_full_np_seed0.pt
+pretrained/s5_mfcc_full_np_seed0.pt
 ```
 
-It corresponds to:
-
-```text
-model=pure_rqf
-data=speech_commands_mfcc
-training=tbptt_local_loss
-model.depth=4
-model.skip_connection=false
-model.prospective_input=false
-seed=0
-```
-
-Evaluate it on the Speech Commands test split:
+Each checkpoint stores its own Hydra overrides. Evaluate one checkpoint on the
+Speech Commands test split:
 
 ```bash
 python evaluate_checkpoint.py \
-  --checkpoint pretrained/pure_rqf_mfcc_tbptt_seed0.pt \
+  --checkpoint pretrained/rqf_s4_mfcc_full_res_p_seed0.pt \
   --split test \
   --data-root data \
-  --output-json outputs/pure_rqf_mfcc_tbptt_seed0_test_metrics.json
+  --output-json outputs/rqf_s4_mfcc_full_res_p_seed0_test_metrics.json
+```
+
+Evaluate every packaged checkpoint:
+
+```bash
+python evaluate_pretrained.py \
+  --split test \
+  --data-root data \
+  --batch-size 512
 ```
 
 For a quick loader/model smoke test without downloading Speech Commands:
 
 ```bash
 python evaluate_checkpoint.py \
-  --checkpoint pretrained/pure_rqf_mfcc_tbptt_seed0.pt \
+  --checkpoint pretrained/rqf_s4_mfcc_full_res_p_seed0.pt \
   --synthetic
 ```

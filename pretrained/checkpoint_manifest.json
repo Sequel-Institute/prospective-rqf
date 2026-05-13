@@ -1,0 +1,236 @@
+[
+  {
+    "file": "pretrained/pure_rqf_mfcc_full_np_seed0.pt",
+    "description": "Pure RQF, MFCC, full BPTT, non-prospective, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=4",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "286d004d7e124e25a47069dcda6f3993",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_pure_mfcc_full_bptt_20260506_m_nores_np_L4_H48_nores_mfcc_full_bptt_np",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000052.ckpt",
+      "best_val_acc": "0.902256965637207",
+      "best_val_acc_epoch": "52",
+      "logged_test_acc": "0.9092013888888889"
+    },
+    "test_metrics_smoke_a100": {
+      "split": "test",
+      "loss": 0.26919309952507087,
+      "acc": 0.9391480730223124,
+      "note": "Computed with this repository on Speech Commands using its local split/normalization implementation; use as checkpoint load/evaluation smoke metric, not as authoritative paper-table metric."
+    }
+  },
+  {
+    "file": "pretrained/pure_rqf_mfcc_full_p_seed0.pt",
+    "description": "Pure RQF, MFCC, full BPTT, prospective input, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=4",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "5c632c049d6c4d06ac146b9f9f43aff1",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_pure_mfcc_full_bptt_20260506_m_nores_p_L4_H48_nores_mfcc_full_bptt_p",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000054.ckpt",
+      "best_val_acc": "0.9364583492279053",
+      "best_val_acc_epoch": "54",
+      "logged_test_acc": "0.9340277777777778"
+    },
+    "test_metrics_smoke_a100": {
+      "split": "test",
+      "loss": 0.18040685469656534,
+      "acc": 0.9701535786728485,
+      "note": "Computed with this repository on Speech Commands using its local split/normalization implementation; use as checkpoint load/evaluation smoke metric, not as authoritative paper-table metric."
+    }
+  },
+  {
+    "file": "pretrained/pure_rqf_mfcc_tbptt_p_seed0.pt",
+    "description": "Pure RQF, MFCC, TBPTT(1) local loss, prospective input, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_mfcc",
+      "training=tbptt_local_loss",
+      "model.depth=2",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "c32840f8e90942feb802f60811b918a0",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_mfcc_300ep_noes_L2_H48_nores_mfcc_p",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000236.ckpt",
+      "best_val_acc": "0.871006965637207",
+      "best_val_acc_epoch": "236",
+      "logged_test_acc": "0.8670138716697693"
+    },
+    "test_metrics_smoke_a100": {
+      "split": "test",
+      "loss": 0.918109057261197,
+      "acc": 0.8617791944363953,
+      "note": "Computed with this repository on Speech Commands using its local split/normalization implementation; use as checkpoint load/evaluation smoke metric, not as authoritative paper-table metric."
+    }
+  },
+  {
+    "file": "pretrained/rqf_s4_mfcc_full_res_np_seed0.pt",
+    "description": "RQF-S4, MFCC, full BPTT, non-prospective, residual, seed 0.",
+    "hydra_overrides": [
+      "model=rqf_s4",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=4",
+      "model.skip_connection=true",
+      "model.prospective_input=false",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "3e3b5764229e403388f94252f53aba56",
+      "mlflow_experiment_id": "4",
+      "mlflow_run_name": "table4_residual_mfcc_s4_300fixed_20260506_M_np_seed0",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000252.ckpt",
+      "best_val_acc": "0.9460069537162781",
+      "best_val_acc_epoch": "252",
+      "logged_test_acc": "0.9489583373069763"
+    },
+    "test_metrics_smoke_a100": {
+      "split": "test",
+      "loss": 0.16200680036332013,
+      "acc": 0.9776876267748479,
+      "note": "Computed with this repository on Speech Commands using its local split/normalization implementation; use as checkpoint load/evaluation smoke metric, not as authoritative paper-table metric."
+    }
+  },
+  {
+    "file": "pretrained/rqf_s4_mfcc_full_res_p_seed0.pt",
+    "description": "RQF-S4, MFCC, full BPTT, prospective input, residual, seed 0.",
+    "hydra_overrides": [
+      "model=rqf_s4",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=4",
+      "model.skip_connection=true",
+      "model.prospective_input=true",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "966a3b8ac5814edcac6d78684993e86d",
+      "mlflow_experiment_id": "4",
+      "mlflow_run_name": "table4_residual_mfcc_s4_300fixed_20260506_M_p_seed0",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000135.ckpt",
+      "best_val_acc": "0.9635416865348816",
+      "best_val_acc_epoch": "135",
+      "logged_test_acc": "0.9614583253860474"
+    },
+    "test_metrics_smoke_a100": {
+      "split": "test",
+      "loss": 0.13729166481087982,
+      "acc": 0.9852216748768473,
+      "note": "Computed with this repository on Speech Commands using its local split/normalization implementation; use as checkpoint load/evaluation smoke metric, not as authoritative paper-table metric."
+    }
+  },
+  {
+    "file": "pretrained/rqf_s4_mfcc_tbptt_p_seed0.pt",
+    "description": "RQF-S4, MFCC, TBPTT(1) local loss, prospective input, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=rqf_s4",
+      "data=speech_commands_mfcc",
+      "training=tbptt_local_loss",
+      "model.depth=4",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "e5411ac1c8b646a384c3e8aa7c940099",
+      "mlflow_experiment_id": "4",
+      "mlflow_run_name": "tbptt_efilt_literal_v1_s4_mfcc_L4_H48_tbptt1_seed0_p",
+      "checkpoint_artifact": "ckpts/best.ckpt",
+      "best_val_acc": "0.949999988079071",
+      "best_val_acc_epoch": "8",
+      "logged_test_acc": "0.9494791626930237"
+    },
+    "test_metrics_smoke_a100": {
+      "split": "test",
+      "loss": 0.5513477089421641,
+      "acc": 0.9420457838307736,
+      "note": "Computed with this repository on Speech Commands using its local split/normalization implementation; use as checkpoint load/evaluation smoke metric, not as authoritative paper-table metric."
+    }
+  },
+  {
+    "file": "pretrained/s4d_raw_full_np_seed0.pt",
+    "description": "S4D baseline, raw waveform, full BPTT, non-prospective, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=s4d",
+      "data=speech_commands_raw",
+      "training=full_bptt",
+      "model.depth=4",
+      "model.hidden_width=48",
+      "model.output_dims=48",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "model.encoder_kwargs.dropout=0.1",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "1f749e4984304b519cd84ec0db2a25ce",
+      "mlflow_experiment_id": "9",
+      "mlflow_run_name": "neurips2026_L4_H48_nores_np",
+      "checkpoint_artifact": "ckpts/best.ckpt/best.ckpt",
+      "best_val_acc": "0.9347222447395325",
+      "best_val_acc_epoch": "93",
+      "logged_test_acc": "0.933680534362793",
+      "selection_note": "Downloaded ckpts/best.ckpt/best.ckpt from this older S4D run; per-epoch checkpoints were not present in the artifact store for this compatible H48 run."
+    },
+    "test_metrics_smoke_a100": {
+      "split": "test",
+      "loss": 0.17557705991926556,
+      "acc": 0.9739206027238482,
+      "note": "Computed with this repository on Speech Commands using its local split/normalization implementation; use as checkpoint load/evaluation smoke metric, not as authoritative paper-table metric."
+    }
+  },
+  {
+    "file": "pretrained/s5_mfcc_full_np_seed0.pt",
+    "description": "S5 baseline, MFCC, full BPTT, non-prospective, residual, seed 0.",
+    "hydra_overrides": [
+      "model=s5",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=6",
+      "model.hidden_width=48",
+      "model.output_dims=48",
+      "model.skip_connection=true",
+      "model.prospective_input=false",
+      "model.encoder_kwargs.blocks=8",
+      "model.encoder_kwargs.use_parallel_scan=true",
+      "model.classifier.hidden_dims=null",
+      "model.classifier.dropout=0.0",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "5989a7ca6e4548b291f61c5976d32170",
+      "mlflow_experiment_id": "16",
+      "mlflow_run_name": "priority_s5_full_grid_parallel_8g_20260506_mfcc_l_np_seed0_retry1",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000070.ckpt",
+      "best_val_acc": "0.9576388597488403",
+      "best_val_acc_epoch": "70",
+      "logged_test_acc": "0.9576388597488403"
+    },
+    "test_metrics_smoke_a100": {
+      "split": "test",
+      "loss": 0.09717962037425426,
+      "acc": 0.9837728194726166,
+      "note": "Computed with this repository on Speech Commands using its local split/normalization implementation; use as checkpoint load/evaluation smoke metric, not as authoritative paper-table metric."
+    }
+  }
+]
