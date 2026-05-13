@@ -111,9 +111,11 @@ Coverage:
 
 ```text
 Pure RQF raw full BPTT:   S/M/L, prospective and non-prospective, residual and no-residual
+Pure RQF raw TBPTT(1):    S/M/L, prospective and non-prospective, no-residual
 Pure RQF MFCC full BPTT:  S/M/L, prospective and non-prospective, residual and no-residual
 Pure RQF MFCC TBPTT(1):   S/M/L, prospective and non-prospective, no-residual
 RQF-S4 raw full BPTT:     S/M/L, prospective and non-prospective, residual and no-residual
+RQF-S4 raw TBPTT(1):      available M no-residual runs
 RQF-S4 MFCC full BPTT:    S/M/L residual, plus available M no-residual runs
 RQF-S4 MFCC TBPTT(1):     available M no-residual runs
 ```
@@ -124,8 +126,10 @@ size, residual flag, prospective flag, and seed:
 ```text
 pretrained/pure_rqf_mfcc_full_M_nores_p_seed0.pt
 pretrained/pure_rqf_raw_full_L_res_p_seed0.pt
+pretrained/pure_rqf_raw_tbptt_M_nores_p_seed0.pt
 pretrained/pure_rqf_mfcc_tbptt_S_nores_np_seed0.pt
 pretrained/rqf_s4_raw_full_M_nores_np_seed0.pt
+pretrained/rqf_s4_raw_tbptt_M_nores_p_seed0.pt
 pretrained/rqf_s4_mfcc_full_L_res_p_seed0.pt
 pretrained/rqf_s4_mfcc_tbptt_M_nores_p_seed0.pt
 ```

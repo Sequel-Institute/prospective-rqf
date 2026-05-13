@@ -881,6 +881,138 @@
     }
   },
   {
+    "file": "pretrained/pure_rqf_raw_tbptt_S_nores_np_seed0.pt",
+    "description": "PURE-RQF, RAW, TBPTT, size S, non-prospective, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_raw",
+      "training=tbptt_local_loss",
+      "model.depth=2",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "238f32fdc400442194e5e6bec269fb74",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_raw_L2_H48_nores_raw_np",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000148.ckpt",
+      "best_val_acc": "0.4217014014720917",
+      "best_val_acc_epoch": "148",
+      "logged_test_acc": "0.4233425557613373"
+    }
+  },
+  {
+    "file": "pretrained/pure_rqf_raw_tbptt_S_nores_p_seed0.pt",
+    "description": "PURE-RQF, RAW, TBPTT, size S, prospective input, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_raw",
+      "training=tbptt_local_loss",
+      "model.depth=2",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "8a2d94d4a48247b784a193b58636fcf5",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_raw_L2_H48_nores_raw_p",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000073.ckpt",
+      "best_val_acc": "0.34600692987442017",
+      "best_val_acc_epoch": "73",
+      "logged_test_acc": "0.3289019465446472"
+    }
+  },
+  {
+    "file": "pretrained/pure_rqf_raw_tbptt_M_nores_np_seed0.pt",
+    "description": "PURE-RQF, RAW, TBPTT, size M, non-prospective, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_raw",
+      "training=tbptt_local_loss",
+      "model.depth=4",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "fa2f5b9f70574b9eb173aed10ce0cf19",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_raw_L4_H48_nores_raw_np",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000066.ckpt",
+      "best_val_acc": "0.4402777850627899",
+      "best_val_acc_epoch": "66",
+      "logged_test_acc": "0.4274861812591553"
+    }
+  },
+  {
+    "file": "pretrained/pure_rqf_raw_tbptt_M_nores_p_seed0.pt",
+    "description": "PURE-RQF, RAW, TBPTT, size M, prospective input, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_raw",
+      "training=tbptt_local_loss",
+      "model.depth=4",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "242a0726fe39490e85c5e2f773e7b43b",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_raw_L4_H48_nores_raw_p",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000124.ckpt",
+      "best_val_acc": "0.6161458492279053",
+      "best_val_acc_epoch": "124",
+      "logged_test_acc": "0.6061809659004211"
+    }
+  },
+  {
+    "file": "pretrained/pure_rqf_raw_tbptt_L_nores_np_seed0.pt",
+    "description": "PURE-RQF, RAW, TBPTT, size L, non-prospective, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_raw",
+      "training=tbptt_local_loss",
+      "model.depth=6",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "c1db9ce21f0a4c3bb1dc318365f894ea",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_raw_L6_H48_nores_raw_np",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000149.ckpt",
+      "best_val_acc": "0.45781248807907104",
+      "best_val_acc_epoch": "149",
+      "logged_test_acc": "0.4490676820278168"
+    }
+  },
+  {
+    "file": "pretrained/pure_rqf_raw_tbptt_L_nores_p_seed0.pt",
+    "description": "PURE-RQF, RAW, TBPTT, size L, prospective input, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=pure_rqf",
+      "data=speech_commands_raw",
+      "training=tbptt_local_loss",
+      "model.depth=6",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "4d1909bf6cd84e97b86e62c5ab728ddd",
+      "mlflow_experiment_id": "5",
+      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_raw_L6_H48_nores_raw_p",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000100.ckpt",
+      "best_val_acc": "0.6314235925674438",
+      "best_val_acc_epoch": "100",
+      "logged_test_acc": "0.6134323477745056"
+    }
+  },
+  {
     "file": "pretrained/rqf_s4_raw_full_S_nores_np_seed0.pt",
     "description": "RQF-S4, RAW, FULL, size S, non-prospective, no residual, seed 0.",
     "hydra_overrides": [
@@ -1142,6 +1274,50 @@
       "best_val_acc": "0.9553819298744202",
       "best_val_acc_epoch": "112",
       "logged_test_acc": "0.9516574740409851"
+    }
+  },
+  {
+    "file": "pretrained/rqf_s4_raw_tbptt_M_nores_np_seed0.pt",
+    "description": "RQF-S4, RAW, TBPTT, size M, non-prospective, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=rqf_s4",
+      "data=speech_commands_raw",
+      "training=tbptt_local_loss",
+      "model.depth=4",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "fc7a4a6057844ad9ac570a90148a25eb",
+      "mlflow_experiment_id": "4",
+      "mlflow_run_name": "tbptt_efilt_v1_s4_raw_L4_H48_tbptt1_seed0_np",
+      "checkpoint_artifact": "ckpts/best.ckpt",
+      "best_val_acc": "0.8057291507720947",
+      "best_val_acc_epoch": "8",
+      "logged_test_acc": "0.7763888835906982"
+    }
+  },
+  {
+    "file": "pretrained/rqf_s4_raw_tbptt_M_nores_p_seed0.pt",
+    "description": "RQF-S4, RAW, TBPTT, size M, prospective input, no residual, seed 0.",
+    "hydra_overrides": [
+      "model=rqf_s4",
+      "data=speech_commands_raw",
+      "training=tbptt_local_loss",
+      "model.depth=4",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "407812bcf8d141de94d35bd3a22fa1b4",
+      "mlflow_experiment_id": "4",
+      "mlflow_run_name": "tbptt_efilt_literal_v1_s4_raw_L4_H48_tbptt1_seed0_p",
+      "checkpoint_artifact": "ckpts/best.ckpt",
+      "best_val_acc": "0.8371527791023254",
+      "best_val_acc_epoch": "9",
+      "logged_test_acc": "0.8293402791023254"
     }
   }
 ]
