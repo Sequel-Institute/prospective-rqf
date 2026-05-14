@@ -320,13 +320,13 @@
       "seed=0"
     ],
     "source": {
-      "mlflow_run_id": "b7fd28da609d45fa85144a625bae3036",
+      "mlflow_run_id": "0605096e04ef4075a0d6e6f011e479c5",
       "mlflow_experiment_id": "5",
-      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_mfcc_L4_H48_nores_mfcc_np",
-      "checkpoint_artifact": "ckpts/epochs/epoch_000056.ckpt",
-      "best_val_acc": "0.6869791746139526",
-      "best_val_acc_epoch": "56",
-      "logged_test_acc": "0.6927083134651184"
+      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_mfcc_300ep_noes_L4_H48_nores_mfcc_np",
+      "checkpoint_artifact": "ckpts/epochs/epoch_000161.ckpt",
+      "best_val_acc": "0.6708333492279053",
+      "best_val_acc_epoch": "167",
+      "logged_test_acc": "0.6769097447395325"
     }
   },
   {
@@ -937,13 +937,13 @@
       "seed=0"
     ],
     "source": {
-      "mlflow_run_id": "fa2f5b9f70574b9eb173aed10ce0cf19",
-      "mlflow_experiment_id": "5",
-      "mlflow_run_name": "neurips2026_h48_canonical_v2_pure_tbptt_raw_L4_H48_nores_raw_np",
-      "checkpoint_artifact": "ckpts/epochs/epoch_000066.ckpt",
-      "best_val_acc": "0.4402777850627899",
-      "best_val_acc_epoch": "66",
-      "logged_test_acc": "0.4274861812591553"
+      "mlflow_run_id": "0971628a5859438f89648a07d91cfc0b",
+      "mlflow_experiment_id": null,
+      "mlflow_run_name": null,
+      "checkpoint_artifact": "ckpts/epochs/epoch_000072.ckpt",
+      "best_val_acc": null,
+      "best_val_acc_epoch": null,
+      "logged_test_acc": null
     }
   },
   {
