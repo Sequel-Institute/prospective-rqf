@@ -238,6 +238,7 @@ class SpeechCommandsSubset(Dataset):
             raise ImportError("torchaudio is required for Speech Commands training") from exc
 
         self.torchaudio = torchaudio
+        Path(root).mkdir(parents=True, exist_ok=True)
         self.base = torchaudio.datasets.SPEECHCOMMANDS(
             root=str(root),
             download=download,
