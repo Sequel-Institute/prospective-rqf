@@ -103,12 +103,8 @@ Each run writes:
 - `checkpoints/best_val_acc.pt`
 - `metrics.json`
 
-Packaged checkpoints are stored under `pretrained/`. Metadata, source run IDs,
-source validation/test metrics, and Hydra overrides are listed in:
-
-```text
-pretrained/checkpoint_manifest.json
-```
+Packaged checkpoints are stored under `pretrained/`. Each checkpoint stores the
+Hydra overrides needed to reconstruct its model configuration.
 
 ## Checkpoint Evaluation
 

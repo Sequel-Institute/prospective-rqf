@@ -9,13 +9,15 @@ from pathlib import Path
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate all packaged pretrained checkpoints listed in pretrained/checkpoint_manifest.json."
+        description="Evaluate packaged checkpoints from a pretrained directory."
     )
     parser.add_argument(
-        "--manifest",
+        "--checkpoint-dir",
         type=Path,
-        default=Path("pretrained/checkpoint_manifest.json"),
+        default=Path("pretrained"),
+        help="Directory containing packaged .pt checkpoints.",
     )
+    parser.add_argument("--pattern", default="*.pt", help="Checkpoint glob pattern.")
     parser.add_argument("--split", choices=("val", "test"), default="test")
     parser.add_argument("--data-root", type=str, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
@@ -33,12 +35,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    manifest = json.loads(args.manifest.read_text())
+    checkpoints = sorted(args.checkpoint_dir.glob(args.pattern))
+    if not checkpoints:
+        raise FileNotFoundError(
+            f"No checkpoints matched {args.checkpoint_dir / args.pattern}"
+        )
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     summary: list[dict[str, object]] = []
-    for item in manifest:
-        checkpoint = Path(item["file"])
+    for checkpoint in checkpoints:
         output_json = args.output_dir / f"{checkpoint.stem}_{args.split}.json"
         cmd = [
             sys.executable,
