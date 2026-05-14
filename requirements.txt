@@ -1,7 +1,6 @@
 numpy
-torch
-torchaudio
+torch==2.7.1
+torchaudio==2.7.1
 hydra-core
 omegaconf
 tqdm
-triton; platform_system == "Linux"

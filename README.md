@@ -20,10 +20,17 @@ The paper tables were produced from five seeds. This review repository defaults 
 
 ## Setup
 
+On Ubuntu, install the standard venv package if needed:
+
+```bash
+sudo apt-get install python3.10-venv
+```
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install --upgrade pip
+pip install -e .
 ```
 
 ## Smoke Test
