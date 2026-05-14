@@ -6,7 +6,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from organics.cells.state import State
+from .state import State
 
 
 class RNNCell(nn.Module, ABC):
