@@ -18,9 +18,9 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
-from organics.cells.implementations.organics_cell import ORGaNICsCell
-from organics.cells.state import ORGaNICsState
-from organics.embedding.rqf import PureRQFEncoder, S4RQFEncoder
+from rqf_models.cells.implementations.organics_cell import ORGaNICsCell
+from rqf_models.cells.state import ORGaNICsState
+from rqf_models.embedding.rqf import PureRQFEncoder, S4RQFEncoder
 
 
 class SequenceClassifier(nn.Module):

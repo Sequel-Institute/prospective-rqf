@@ -14,15 +14,15 @@ from typing import ClassVar
 import torch
 import torch.nn as nn
 
-from organics.embedding.base import EmbeddingBase
-from organics.embedding.rqf.filter import RQF
-from organics.embedding.rqf.utils.activations import SplitReLU, SplitTanh
-from organics.embedding.rqf.utils.divisive_normalization import DivisiveNormalization
-from organics.ops.scan import parallel_scan, sequential_scan, sequential_scan_abs
+from rqf_models.embedding.base import EmbeddingBase
+from rqf_models.embedding.rqf.filter import RQF
+from rqf_models.embedding.rqf.utils.activations import SplitReLU, SplitTanh
+from rqf_models.embedding.rqf.utils.divisive_normalization import DivisiveNormalization
+from rqf_models.ops.scan import parallel_scan, sequential_scan, sequential_scan_abs
 
 # Fused multi-oscillator scan (optional, requires Triton + CUDA)
 try:
-    from organics.ops.triton_scan_kernel import (
+    from rqf_models.ops.triton_scan_kernel import (
         _sequential_scan_multi_osc_forward_abs_raw,
         _sequential_scan_multi_osc_real_forward_abs_raw,
         _triton_parallel_scan_multi_osc,

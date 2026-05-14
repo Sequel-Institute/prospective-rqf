@@ -19,8 +19,8 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from organics.embedding.rqf.block import BaseRQFBlock
-from organics.embedding.rqf.encoder import BaseRQFEncoder
+from rqf_models.embedding.rqf.block import BaseRQFBlock
+from rqf_models.embedding.rqf.encoder import BaseRQFEncoder
 
 
 class PureRQFBlock(BaseRQFBlock):
@@ -30,7 +30,7 @@ class PureRQFBlock(BaseRQFBlock):
     (passthrough) so the base class scan infrastructure is fully reused
     without real-valued conversion.
 
-    Compared to :class:`~organics.embedding.rqf.s4.S4RQFBlock`, this block:
+    Compared to :class:`~rqf_models.embedding.rqf.s4.S4RQFBlock`, this block:
     - Sets ``num_filters = d_model_out`` (one RQF oscillator per output neuron)
     - Adds a complex-valued weight matrix ``W`` for input projection
     - Has no post-scan processing (no GLU, dropout, skip, normalization)

@@ -3,7 +3,7 @@
 ``RQF``
     Atomic parameter module (``nn.Module``). Stores learnable gamma, freq, tau
     and computes discretized coefficients C1, C2. Used internally by
-    :class:`~organics.embedding.rqf.block.BaseRQFBlock` — does **not** run a
+    :class:`~rqf_models.embedding.rqf.block.BaseRQFBlock` — does **not** run a
     scan or recurrence itself.
 """
 
@@ -95,7 +95,7 @@ class RQF(nn.Module):
 
     This is the atomic building block used by :class:`BaseRQFBlock` and its
     subclasses. It does **not** run a scan — the caller is responsible for
-    executing the recurrence (via ``organics.ops.scan`` or Triton kernels).
+    executing the recurrence (via ``rqf_models.ops.scan`` or Triton kernels).
 
     Args:
         num_filters: Number of parallel filter banks. Each filter bank has

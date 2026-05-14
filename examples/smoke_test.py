@@ -12,7 +12,7 @@ from train import build_model, validate_cfg
 
 def main() -> None:
     with initialize(version_base="1.3", config_path="../configs"):
-        for model_name in ("pure_rqf", "rqf_s4", "s4d", "s5"):
+        for model_name in ("pure_rqf", "rqf_s4", "discrete_organics"):
             cfg = compose(
                 config_name="config",
                 overrides=[

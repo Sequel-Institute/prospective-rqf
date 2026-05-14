@@ -11,7 +11,7 @@ divisive normalization operation.
 import torch
 import torch.nn as nn
 
-from organics.constraints.parameter import WMatrix
+from rqf_models.constraints.parameter import WMatrix
 
 
 class DivisiveNormalization(nn.Module):

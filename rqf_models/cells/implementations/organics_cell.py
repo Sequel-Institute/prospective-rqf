@@ -32,7 +32,7 @@ Conventions:
     - Supports multiple recurrent weight constraints (spectral norm, orthogonal, etc.)
 
 Example:
-    >>> from organics.cells.implementations.organics_cell import ORGaNICsCell
+    >>> from rqf_models.cells.implementations.organics_cell import ORGaNICsCell
     >>> cell = ORGaNICsCell(input_size=10, hidden_size=64,
     ...                      organics_activation='rectified_recurrence',
     ...                      Wr_constraint='spectral_norm')

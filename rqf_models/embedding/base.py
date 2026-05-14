@@ -13,7 +13,7 @@ Classes:
 
 See Also:
     For an example implementation of an embedding layer, refer to:
-    organics/embedding/rqf/block.py (BaseRQFBlock)
+    rqf_models/embedding/rqf/block.py (BaseRQFBlock)
 """
 
 from abc import ABC, abstractmethod

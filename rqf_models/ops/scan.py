@@ -44,7 +44,7 @@ _TRITON_DISABLED = os.environ.get("ORGANICS_DISABLE_TRITON", "0") == "1"
 _TRITON_MAX_INPUT_FEATURES = 1024
 
 try:
-    from organics.ops.triton_scan_kernel import (
+    from rqf_models.ops.triton_scan_kernel import (
         _sequential_scan_forward_abs_raw_block_f,
         _sequential_scan_real_forward_abs_raw_block_f,
         _triton_parallel_scan,

@@ -52,7 +52,7 @@ Fused Multi-Oscillator Parallel Scan:
     N× less memory than N separate scans.
 
 Example:
-    >>> from organics.ops.triton_scan_kernel import (
+    >>> from rqf_models.ops.triton_scan_kernel import (
     ...     _triton_sequential_scan,
     ...     _triton_parallel_scan,
     ... )

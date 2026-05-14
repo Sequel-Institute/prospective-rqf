@@ -11,15 +11,15 @@ Supports optional GLU output and optional skip connections.
 import torch
 import torch.nn as nn
 
-from organics.embedding.rqf.block import BaseRQFBlock
-from organics.embedding.rqf.encoder import BaseRQFEncoder
+from rqf_models.embedding.rqf.block import BaseRQFBlock
+from rqf_models.embedding.rqf.encoder import BaseRQFEncoder
 
 
 class S4RQFBlock(BaseRQFBlock):
     """S4-style RQF block with single-path scan and optional GLU output.
 
     Inherits RQF filter construction, scan execution, and readout from
-    :class:`~organics.embedding.rqf.block.BaseRQFBlock`.
+    :class:`~rqf_models.embedding.rqf.block.BaseRQFBlock`.
     Adds a single-path input projection, optional post-scan expansion,
     optional GLU output, and optional skip connections.
 
