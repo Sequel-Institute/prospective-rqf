@@ -11,3 +11,6 @@ dependencies = [
     "torchaudio",
     "tqdm",
 ]
+
+[tool.setuptools.packages.find]
+include = ["rqf_models*"]
