@@ -5,6 +5,7 @@ import json
 import random
 import wave
 from collections import defaultdict
+from dataclasses import fields, is_dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +13,13 @@ import hydra
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.utils.parametrize as parametrize
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
+from organics.cells.implementations.organics_cell import ORGaNICsCell
+from organics.cells.state import ORGaNICsState
 from organics.embedding.rqf import PureRQFEncoder, S4RQFEncoder
 
 
@@ -60,6 +64,138 @@ class SequenceClassifier(nn.Module):
             return logits.mean(dim=1) if self.pooling == "mean" else logits[:, -1, :]
         pooled = features.mean(dim=1) if self.pooling == "mean" else features[:, -1, :]
         return self.head(pooled)
+
+
+class OrganicsSequenceClassifier(nn.Module):
+    def __init__(
+        self,
+        cells: list[ORGaNICsCell],
+        hidden_width: int,
+        num_classes: int,
+        use_layer_norm: bool,
+        skip_connection: bool,
+        recurrent_grad_mode: str,
+        pooling: str,
+        per_step_loss: bool,
+        per_step_readout: str,
+    ) -> None:
+        super().__init__()
+        if recurrent_grad_mode not in {"full", "tbptt1"}:
+            raise ValueError(f"unsupported recurrent_grad_mode: {recurrent_grad_mode!r}")
+        if pooling not in {"mean", "last"}:
+            raise ValueError(f"pooling must be 'mean' or 'last', got {pooling!r}")
+        if per_step_readout not in {"instant", "causal_mean_local"}:
+            raise ValueError(f"unsupported per_step_readout: {per_step_readout!r}")
+        self.cells = nn.ModuleList(cells)
+        self.head = nn.Linear(hidden_width, num_classes)
+        self.use_layer_norm = use_layer_norm
+        self.skip_connection = skip_connection
+        self.recurrent_grad_mode = recurrent_grad_mode
+        self.pooling = pooling
+        self.per_step_loss = per_step_loss
+        self.per_step_readout = per_step_readout
+        self.layer_norms = nn.ModuleList(
+            [nn.LayerNorm(hidden_width) for _ in cells[:-1]]
+        ) if use_layer_norm else nn.ModuleList()
+
+    @staticmethod
+    def _detach_recurrent_state(state):
+        if isinstance(state, ORGaNICsState):
+            return ORGaNICsState(
+                y=state.y.detach(),
+                a=state.a.detach(),
+                b0=state.b0.detach(),
+                b1=state.b1.detach(),
+                z_prev=state.z_prev,
+            )
+        if isinstance(state, torch.Tensor):
+            return state.detach()
+        if is_dataclass(state) and not isinstance(state, type):
+            return replace(
+                state,
+                **{
+                    field.name: OrganicsSequenceClassifier._detach_recurrent_state(
+                        getattr(state, field.name)
+                    )
+                    for field in fields(state)
+                },
+            )
+        if isinstance(state, tuple):
+            return type(state)(
+                OrganicsSequenceClassifier._detach_recurrent_state(item) for item in state
+            )
+        if isinstance(state, list):
+            return [OrganicsSequenceClassifier._detach_recurrent_state(item) for item in state]
+        if isinstance(state, dict):
+            return {
+                key: OrganicsSequenceClassifier._detach_recurrent_state(value)
+                for key, value in state.items()
+            }
+        return state
+
+    def _maybe_detach_recurrent_state(self, state):
+        if self.recurrent_grad_mode == "tbptt1" and torch.is_grad_enabled():
+            return self._detach_recurrent_state(state)
+        return state
+
+    def _step_cell(self, cell: ORGaNICsCell, layer_input: torch.Tensor, state):
+        if (
+            self.recurrent_grad_mode == "tbptt1"
+            and torch.is_grad_enabled()
+            and cell.prospective_input
+        ):
+            return cell.step(layer_input, state, detach_z_prev_source=True)
+        return cell.step(layer_input, state)
+
+    @staticmethod
+    def _causal_mean_local(hidden_seq: torch.Tensor) -> torch.Tensor:
+        _, seq_len, _ = hidden_seq.shape
+        counts = torch.arange(
+            1,
+            seq_len + 1,
+            device=hidden_seq.device,
+            dtype=hidden_seq.dtype,
+        ).view(1, seq_len, 1)
+        with torch.no_grad():
+            prefix_sum_detached = torch.cumsum(hidden_seq.detach(), dim=1)
+            prev_sum_detached = prefix_sum_detached - hidden_seq.detach()
+        return (prev_sum_detached + hidden_seq) / counts
+
+    def _readout_sequence(self, hidden_seq: torch.Tensor, final_state) -> torch.Tensor:
+        if self.per_step_loss:
+            if self.training:
+                if self.per_step_readout == "causal_mean_local":
+                    hidden_seq = self._causal_mean_local(hidden_seq)
+                return self.head(hidden_seq)
+            logits = self.head(hidden_seq)
+            return logits.mean(dim=1) if self.pooling == "mean" else logits[:, -1, :]
+
+        if self.pooling == "mean":
+            final_hidden = hidden_seq.mean(dim=1)
+        else:
+            final_hidden = self.cells[-1].output(final_state)
+        return self.head(final_hidden)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_length, _ = x.shape
+        states = [cell.init_state_training(batch_size) for cell in self.cells]
+        outputs: list[torch.Tensor] = []
+        for cell in self.cells:
+            cell.compute_cache()
+        with parametrize.cached():
+            for t in range(seq_length):
+                layer_input = x[:, t, :]
+                for layer_idx, cell in enumerate(self.cells):
+                    states[layer_idx] = self._maybe_detach_recurrent_state(states[layer_idx])
+                    states[layer_idx] = self._step_cell(cell, layer_input, states[layer_idx])
+                    layer_output = cell.output(states[layer_idx])
+                    if self.skip_connection and layer_output.shape == layer_input.shape:
+                        layer_output = layer_output + layer_input
+                    if self.use_layer_norm and layer_idx < len(self.cells) - 1:
+                        layer_output = self.layer_norms[layer_idx](layer_output)
+                    layer_input = layer_output
+                outputs.append(layer_input)
+        return self._readout_sequence(torch.stack(outputs, dim=1), states[-1])
 
 
 class SyntheticSpeechCommands(Dataset):
@@ -297,7 +433,41 @@ def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:
     return encoder, output_dims
 
 
-def build_model(cfg: DictConfig) -> SequenceClassifier:
+def build_organics_model(cfg: DictConfig) -> OrganicsSequenceClassifier:
+    hidden_width = int(cfg.model.hidden_width)
+    cells = [
+        ORGaNICsCell(
+            input_size=int(cfg.data.feature_dim) if layer == 0 else hidden_width,
+            hidden_size=hidden_width,
+            organics_activation=str(cfg.model.cell.organics_activation),
+            Wr_constraint=str(cfg.model.cell.Wr_constraint),
+            Way_constraint=str(cfg.model.cell.Way_constraint),
+            learn_tau=bool(cfg.model.cell.learn_tau),
+            dt_tau_max_y=float(cfg.model.cell.dt_tau_max_y),
+            dt_tau_max_a=float(cfg.model.cell.dt_tau_max_a),
+            dt_tau_max_b=float(cfg.model.cell.dt_tau_max_b),
+            sigma=float(cfg.model.cell.sigma),
+            n=float(cfg.model.cell.n),
+            prospective_input=bool(cfg.model.prospective_input),
+        )
+        for layer in range(int(cfg.model.depth))
+    ]
+    return OrganicsSequenceClassifier(
+        cells=cells,
+        hidden_width=hidden_width,
+        num_classes=len(cfg.data.classes),
+        use_layer_norm=bool(cfg.model.network.use_layer_norm),
+        skip_connection=bool(cfg.model.skip_connection),
+        recurrent_grad_mode=str(cfg.training.scan_grad_mode),
+        pooling=str(cfg.training.pooling),
+        per_step_loss=bool(cfg.training.per_step_loss),
+        per_step_readout=str(cfg.model.network.per_step_readout),
+    )
+
+
+def build_model(cfg: DictConfig) -> nn.Module:
+    if cfg.model.encoder == "discrete_organics":
+        return build_organics_model(cfg)
     encoder, output_dims = build_encoder(cfg)
     return SequenceClassifier(
         encoder=encoder,

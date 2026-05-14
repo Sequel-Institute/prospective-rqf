@@ -1319,5 +1319,161 @@
       "best_val_acc_epoch": "9",
       "logged_test_acc": "0.8293402791023254"
     }
+  },
+  {
+    "file": "pretrained/discrete_organics_mfcc_full_S_nores_np_seed0.pt",
+    "description": "DISCRETE-ORGANICS, MFCC, FULL, size S, non-prospective, no residual, no layer norm, seed 0.",
+    "hydra_overrides": [
+      "model=discrete_organics",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=2",
+      "model.hidden_width=48",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "model.network.use_layer_norm=false",
+      "training.batch_size=1024",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "c6faf452cd3443df86dadd3d7ec872a9",
+      "mlflow_experiment_id": "6",
+      "mlflow_run_name": "neurips2026_L2_H48_noln_np",
+      "checkpoint_artifact": "ckpts/best.ckpt/best.ckpt",
+      "checkpoint_selection": "source_best_checkpoint",
+      "best_val_acc": 0.9078124761581421,
+      "best_val_acc_epoch": 225,
+      "logged_test_acc": 0.9085937738418579
+    }
+  },
+  {
+    "file": "pretrained/discrete_organics_mfcc_full_S_nores_p_seed0.pt",
+    "description": "DISCRETE-ORGANICS, MFCC, FULL, size S, prospective input, no residual, no layer norm, seed 0.",
+    "hydra_overrides": [
+      "model=discrete_organics",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=2",
+      "model.hidden_width=48",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "model.network.use_layer_norm=false",
+      "training.batch_size=1024",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "3948bd6f25494749adf57cd414cd96f0",
+      "mlflow_experiment_id": "6",
+      "mlflow_run_name": "neurips2026_L2_H48_noln_p",
+      "checkpoint_artifact": "ckpts/best.ckpt/best.ckpt",
+      "checkpoint_selection": "source_best_checkpoint",
+      "best_val_acc": 0.9261718988418579,
+      "best_val_acc_epoch": 153,
+      "logged_test_acc": 0.9365234375
+    }
+  },
+  {
+    "file": "pretrained/discrete_organics_mfcc_full_M_nores_np_seed0.pt",
+    "description": "DISCRETE-ORGANICS, MFCC, FULL, size M, non-prospective, no residual, no layer norm, seed 0.",
+    "hydra_overrides": [
+      "model=discrete_organics",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=4",
+      "model.hidden_width=48",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "model.network.use_layer_norm=false",
+      "training.batch_size=1024",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "29d34bd57ee14e00903fb8c0f2deb709",
+      "mlflow_experiment_id": "6",
+      "mlflow_run_name": "neurips2026_L4_H48_noln_np",
+      "checkpoint_artifact": "ckpts/best.ckpt/best.ckpt",
+      "checkpoint_selection": "source_best_checkpoint",
+      "best_val_acc": 0.886523425579071,
+      "best_val_acc_epoch": 289,
+      "logged_test_acc": 0.889453113079071
+    }
+  },
+  {
+    "file": "pretrained/discrete_organics_mfcc_full_M_nores_p_seed0.pt",
+    "description": "DISCRETE-ORGANICS, MFCC, FULL, size M, prospective input, no residual, no layer norm, seed 0.",
+    "hydra_overrides": [
+      "model=discrete_organics",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=4",
+      "model.hidden_width=48",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "model.network.use_layer_norm=false",
+      "training.batch_size=1024",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "d20386ebf01e401c8deb458171645024",
+      "mlflow_experiment_id": "6",
+      "mlflow_run_name": "neurips2026_L4_H48_noln_p",
+      "checkpoint_artifact": "ckpts/best.ckpt/best.ckpt",
+      "checkpoint_selection": "source_best_checkpoint",
+      "best_val_acc": 0.926562488079071,
+      "best_val_acc_epoch": 122,
+      "logged_test_acc": 0.934765636920929
+    }
+  },
+  {
+    "file": "pretrained/discrete_organics_mfcc_full_L_nores_np_seed0.pt",
+    "description": "DISCRETE-ORGANICS, MFCC, FULL, size L, non-prospective, no residual, no layer norm, seed 0.",
+    "hydra_overrides": [
+      "model=discrete_organics",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=6",
+      "model.hidden_width=48",
+      "model.skip_connection=false",
+      "model.prospective_input=false",
+      "model.network.use_layer_norm=false",
+      "training.batch_size=1024",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "4a760d7d76024433ad033a9669dd11fd",
+      "mlflow_experiment_id": "6",
+      "mlflow_run_name": "neurips2026_L6_H48_noln_np",
+      "checkpoint_artifact": "ckpts/best.ckpt/best.ckpt",
+      "checkpoint_selection": "source_best_checkpoint",
+      "best_val_acc": 0.800585925579071,
+      "best_val_acc_epoch": 257,
+      "logged_test_acc": 0.7933593988418579
+    }
+  },
+  {
+    "file": "pretrained/discrete_organics_mfcc_full_L_nores_p_seed0.pt",
+    "description": "DISCRETE-ORGANICS, MFCC, FULL, size L, prospective input, no residual, no layer norm, seed 0.",
+    "hydra_overrides": [
+      "model=discrete_organics",
+      "data=speech_commands_mfcc",
+      "training=full_bptt",
+      "model.depth=6",
+      "model.hidden_width=48",
+      "model.skip_connection=false",
+      "model.prospective_input=true",
+      "model.network.use_layer_norm=false",
+      "training.batch_size=1024",
+      "seed=0"
+    ],
+    "source": {
+      "mlflow_run_id": "ed4f60271023406e9fbade9556229423",
+      "mlflow_experiment_id": "6",
+      "mlflow_run_name": "neurips2026_L6_H48_noln_p",
+      "checkpoint_artifact": "ckpts/best.ckpt/best.ckpt",
+      "checkpoint_selection": "source_best_checkpoint",
+      "best_val_acc": 0.920703113079071,
+      "best_val_acc_epoch": 93,
+      "logged_test_acc": 0.924023449420929
+    }
   }
 ]

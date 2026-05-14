@@ -11,6 +11,7 @@ The code includes:
 
 - standalone Pure RQF encoders;
 - RQF-S4 encoders;
+- discrete ORGaNICs recurrent baselines;
 - Hydra configs for raw waveform and MFCC Speech Commands inputs;
 - Hydra configs for full BPTT and TBPTT(1) local per-step loss;
 - a simple PyTorch training script.
@@ -32,9 +33,10 @@ This uses synthetic data and only checks that the selected model/config builds a
 ```bash
 python train.py data=speech_commands_mfcc data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=pure_rqf model.depth=2
 python train.py data=speech_commands_mfcc data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=rqf_s4 model.depth=2
+python train.py data=speech_commands_mfcc data.use_synthetic=true training.max_epochs=1 training.batch_size=4 model=discrete_organics model.depth=2
 ```
 
-## Main RQF Grids
+## Main Training Grids
 
 Pure RQF, raw waveform, full BPTT:
 
@@ -80,6 +82,18 @@ python train.py -m model=rqf_s4 data=speech_commands_mfcc training=tbptt_local_l
   model.depth=2,4,6 model.prospective_input=false,true model.skip_connection=false,true seed=0
 ```
 
+Discrete ORGaNICs baselines use MFCC inputs:
+
+```bash
+python train.py -m model=discrete_organics data=speech_commands_mfcc training=full_bptt \
+  model.depth=2,4,6 model.prospective_input=false,true model.skip_connection=false,true \
+  training.batch_size=512 seed=0
+
+python train.py -m model=discrete_organics data=speech_commands_mfcc training=tbptt_local_loss \
+  model.depth=2,4,6 model.prospective_input=false,true model.skip_connection=false,true \
+  training.batch_size=512 seed=0
+```
+
 ## Outputs
 
 Each run writes:
@@ -98,7 +112,8 @@ pretrained/checkpoint_manifest.json
 
 ## Checkpoint Evaluation
 
-The repository includes seed-0 raw-waveform and MFCC checkpoints for Pure RQF and RQF-S4.
+The repository includes seed-0 raw-waveform and MFCC checkpoints for Pure RQF and RQF-S4,
+plus seed-0 MFCC/full-BPTT checkpoints for discrete ORGaNICs.
 Model sizes are:
 
 ```text
@@ -118,6 +133,7 @@ RQF-S4 raw full BPTT:     S/M/L, prospective and non-prospective, residual and n
 RQF-S4 raw TBPTT(1):      available M no-residual runs
 RQF-S4 MFCC full BPTT:    S/M/L residual, plus available M no-residual runs
 RQF-S4 MFCC TBPTT(1):     available M no-residual runs
+Discrete ORGaNICs MFCC:   S/M/L full BPTT, prospective and non-prospective, no-residual/no-layer-norm
 ```
 
 The checkpoint filenames encode model, input representation, training mode,
@@ -132,6 +148,7 @@ pretrained/rqf_s4_raw_full_M_nores_np_seed0.pt
 pretrained/rqf_s4_raw_tbptt_M_nores_p_seed0.pt
 pretrained/rqf_s4_mfcc_full_L_res_p_seed0.pt
 pretrained/rqf_s4_mfcc_tbptt_M_nores_p_seed0.pt
+pretrained/discrete_organics_mfcc_full_M_nores_p_seed0.pt
 ```
 
 Each checkpoint stores its own Hydra overrides. Evaluate one checkpoint on the

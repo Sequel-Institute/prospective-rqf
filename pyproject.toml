@@ -1,7 +1,7 @@
 [project]
-name = "rqf"
+name = "rqf-organics"
 version = "0.0.0"
-description = "Minimal RQF, RQF-S4, S4D, and S5 training code"
+description = "RQF, RQF-S4, and discrete ORGaNICs Speech Commands training code"
 requires-python = ">=3.10"
 dependencies = [
     "hydra-core",

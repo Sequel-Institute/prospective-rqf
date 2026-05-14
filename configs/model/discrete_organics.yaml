@@ -1,0 +1,21 @@
+name: discrete_organics
+encoder: discrete_organics
+depth: 2
+hidden_width: 48
+skip_connection: false
+prospective_input: false
+
+cell:
+  organics_activation: rectified_recurrence
+  Wr_constraint: identity
+  Way_constraint: full_rank
+  learn_tau: false
+  dt_tau_max_y: 0.05
+  dt_tau_max_a: 0.05
+  dt_tau_max_b: 0.1
+  sigma: 1.0
+  n: 2.0
+
+network:
+  use_layer_norm: false
+  per_step_readout: instant

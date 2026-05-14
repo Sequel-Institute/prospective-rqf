@@ -1,6 +1,6 @@
 """Pure RQF block and encoder with complex passthrough.
 
-Minimal RQF architecture: complex weight matrix → ZOH scan → split
+Standalone RQF architecture: complex weight matrix → ZOH scan → split
 activation → complex output.
 
 Unlike S4/Mamba variants, complex values pass directly between layers with
