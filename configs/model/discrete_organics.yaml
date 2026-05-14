@@ -3,6 +3,10 @@ encoder: discrete_organics
 depth: 2
 hidden_width: 48
 skip_connection: false
+# Input-drive convention:
+# false = instantaneous input; true = prospective input. The prospective variant
+# applies the local look-ahead correction to the bottom-up input supplied to each
+# recurrent layer.
 prospective_input: false
 
 cell:

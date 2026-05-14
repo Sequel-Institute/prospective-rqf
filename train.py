@@ -387,7 +387,10 @@ def variant_filter_scales(cfg: DictConfig) -> list[dict[str, Any]] | None:
 
 def validate_cfg(cfg: DictConfig) -> None:
     if cfg.training.per_step_loss and cfg.training.scan_grad_mode != "tbptt1":
-        raise ValueError("per_step_loss=true requires training.scan_grad_mode=tbptt1")
+        raise ValueError(
+            "per_step_loss=true is used for the spatial-only backpropagation / "
+            "TBPTT(1) condition and requires training.scan_grad_mode=tbptt1"
+        )
 
 
 def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:

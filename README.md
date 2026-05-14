@@ -3,9 +3,10 @@ Patent notice: this repository includes patent-protected methods and is shared f
 # Recursive Quadrature Filter Experiments
 
 This repository contains the training and evaluation code for the Speech
-Commands experiments based on Recursive Quadrature Filters (RQFs), prospective
-input, and local TBPTT(1) loss. It includes the model code, Hydra
-configurations, packaged checkpoints, and direct training/evaluation scripts.
+Commands experiments based on Recursive Quadrature Filters (RQFs),
+prospective-input coding, and spatial-only backpropagation. It includes the
+model code, Hydra configurations, packaged checkpoints, and direct
+training/evaluation scripts.
 
 The code includes:
 
@@ -13,10 +14,33 @@ The code includes:
 - RQF-S4 encoders;
 - discrete ORGaNICs recurrent baselines;
 - Hydra configs for raw waveform and MFCC Speech Commands inputs;
-- Hydra configs for full BPTT and TBPTT(1) local per-step loss;
+- Hydra configs for full BPTT and spatial-only backpropagation;
 - a simple PyTorch training script.
 
 The paper tables were produced from five seeds. This review repository defaults to `seed=0` and exposes the same model/configuration axes so each reported configuration can be re-run directly.
+
+## Configuration Terms
+
+`Recursive Quadrature Filter (RQF)` denotes the complex-valued temporal filter
+used here. Each scalar RQF is equivalent to a single-channel diagonal state-space
+model, with learnable phase-prior frequency and bandwidth parameters.
+
+`model.prospective_input=false` is the instantaneous-input baseline: the
+current bottom-up layer input is passed directly to the next recurrent layer.
+`model.prospective_input=true` is the prospective-input condition: the same
+bottom-up input is advanced with the look-ahead operator
+`chi_tau = 1 + tau d/dt`. In code this is implemented as the derived two-tap
+input path.
+
+`training=full_bptt` is standard full backpropagation through time, with
+gradients propagated through the full recurrent trajectory. `training=tbptt_local_loss`
+implements spatial-only backpropagation: the temporal recurrence is detached at
+each step (TBPTT(1)), while the within-step spatial chain through depth remains
+live and receives a local per-step loss.
+
+The raw-waveform input is one second of audio at 16 kHz (`T=16000`, one scalar
+sample per step). The MFCC input is a lower-rate cepstral representation
+(`T=161`, 20 coefficients per step).
 
 ## Setup
 
@@ -52,7 +76,7 @@ python train.py -m model=pure_rqf data=speech_commands_raw training=full_bptt \
   model.depth=2,4,6 model.prospective_input=false,true model.skip_connection=false,true seed=0
 ```
 
-Pure RQF, raw waveform, TBPTT(1) with local per-step loss:
+Pure RQF, raw waveform, spatial-only backpropagation / TBPTT(1):
 
 ```bash
 python train.py -m model=pure_rqf data=speech_commands_raw training=tbptt_local_loss \
@@ -66,7 +90,7 @@ python train.py -m model=pure_rqf data=speech_commands_mfcc training=full_bptt \
   model.depth=2,4,6 model.prospective_input=false,true model.skip_connection=false,true seed=0
 ```
 
-Pure RQF, MFCC, TBPTT(1) with local per-step loss:
+Pure RQF, MFCC, spatial-only backpropagation / TBPTT(1):
 
 ```bash
 python train.py -m model=pure_rqf data=speech_commands_mfcc training=tbptt_local_loss \

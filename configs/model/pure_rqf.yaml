@@ -4,6 +4,10 @@ depth: 2
 hidden_width: 48
 output_dims: 48
 skip_connection: false
+# Input-drive convention:
+# false = instantaneous input; true = prospective input. The prospective variant
+# applies chi_tau = 1 + tau d/dt through the two-tap input path before the
+# bottom-up drive enters the next RQF layer.
 prospective_input: false
 prospective_mode: tau
 prospective_tau: null

@@ -1,4 +1,5 @@
 name: full_bptt
+# Full BPTT: gradients propagate through the full recurrent trajectory.
 scan_grad_mode: full
 per_step_loss: false
 pooling: mean

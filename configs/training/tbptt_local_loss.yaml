@@ -1,4 +1,7 @@
 name: tbptt_local_loss
+# Spatial-only backpropagation: the recurrent state is detached at each step
+# (TBPTT(1)); gradients still flow through the within-step spatial chain across
+# layers and use a local per-step loss.
 scan_grad_mode: tbptt1
 per_step_loss: true
 pooling: mean
