@@ -1,6 +1,6 @@
 """Base RQF block with shared scan infrastructure.
 
-Provides the common foundation for S4-style, Mamba-style, and Pure RQF blocks:
+Provides the common foundation for RQF-S4-style and Pure RQF blocks:
 RQF filter construction, coefficient computation, scan execution,
 multi-oscillator C-weight combination, and readout modes.
 
@@ -14,10 +14,10 @@ from typing import ClassVar
 import torch
 import torch.nn as nn
 
-from rqf_models.embedding.base import EmbeddingBase
-from rqf_models.embedding.rqf.filter import RQF
-from rqf_models.embedding.rqf.utils.activations import SplitReLU, SplitTanh
-from rqf_models.embedding.rqf.utils.divisive_normalization import DivisiveNormalization
+from rqf_models.backbones.base import BackboneBase
+from rqf_models.backbones.rqf.filter import RQF
+from rqf_models.backbones.rqf.utils.activations import SplitReLU, SplitTanh
+from rqf_models.backbones.rqf.utils.divisive_normalization import DivisiveNormalization
 from rqf_models.ops.scan import parallel_scan, sequential_scan, sequential_scan_abs
 
 # Fused multi-oscillator scan (optional, requires Triton + CUDA)
@@ -128,7 +128,7 @@ def _validate_readout_config(
         )
 
 
-class BaseRQFBlock(EmbeddingBase):
+class BaseRQFBlock(BackboneBase):
     """Base class for RQF blocks with shared scan infrastructure.
 
     Handles RQF filter construction, coefficient computation, scan execution,

@@ -20,7 +20,7 @@ from tqdm.auto import tqdm
 
 from rqf_models.cells.implementations.organics_cell import ORGaNICsCell
 from rqf_models.cells.state import ORGaNICsState
-from rqf_models.embedding.rqf import PureRQFEncoder, S4RQFEncoder
+from rqf_models.backbones.rqf import PureRQFEncoder, S4RQFEncoder
 
 
 class SequenceClassifier(nn.Module):

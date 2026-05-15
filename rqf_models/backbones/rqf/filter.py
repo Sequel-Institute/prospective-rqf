@@ -3,7 +3,7 @@
 ``RQF``
     Atomic parameter module (``nn.Module``). Stores learnable gamma, freq, tau
     and computes discretized coefficients C1, C2. Used internally by
-    :class:`~rqf_models.embedding.rqf.block.BaseRQFBlock` — does **not** run a
+    :class:`~rqf_models.backbones.rqf.block.BaseRQFBlock` — does **not** run a
     scan or recurrence itself.
 """
 
