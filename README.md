@@ -1,4 +1,4 @@
-Patent notice: this repository includes patent-protected methods and is shared for anonymous review of the submitted paper.
+Patent notice: this repository includes methods that are patent pending. It is shared for anonymous review of the submitted paper under the CC BY-NC-SA License.
 
 # Recursive Quadrature Filter Experiments
 
