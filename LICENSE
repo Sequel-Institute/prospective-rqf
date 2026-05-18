@@ -1,8 +1,18 @@
+SPDX-License-Identifier: CC-BY-NC-SA-4.0
+
 Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 
-This repository is shared under the Creative Commons
-Attribution-NonCommercial-ShareAlike 4.0 International License
+Unless otherwise noted, the original code, configuration files, documentation,
+and packaged model artifacts in this repository are shared under the Creative
+Commons Attribution-NonCommercial-ShareAlike 4.0 International License
 (CC BY-NC-SA 4.0).
+
+Third-party dependencies, externally downloaded datasets, and other materials
+not authored as part of this repository remain governed by their own licenses
+and terms.
+
+License name:
+Attribution-NonCommercial-ShareAlike 4.0 International License
 
 License deed:
 https://creativecommons.org/licenses/by-nc-sa/4.0/
@@ -11,5 +21,5 @@ Legal code:
 https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.en
 
 Patent notice:
-Methods in this repository are patent pending.
-
+Methods in this repository are patent pending. CC BY-NC-SA 4.0 does not
+license patent rights; see Section 2(b)(2) of the legal code.
