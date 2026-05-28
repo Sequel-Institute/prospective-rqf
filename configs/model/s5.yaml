@@ -1,0 +1,36 @@
+name: s5
+encoder: s5
+family: ssm
+
+depth: 6
+hidden_width: 48
+output_dims: 64
+skip_connection: false
+prospective_input: false
+prospective_tau:
+prospective_tau_multiplier:
+prospective_initial: zero
+prospective_feedthrough: false
+prospective_input_gain: false
+min_input_gain: 0.000001
+
+encoder_kwargs:
+  d_state: 48
+  blocks: 8
+  dropout: 0.0
+  dt_min: 0.001
+  dt_max: 0.1
+  discretization: zoh
+  activation: half_glu1
+  conj_sym: true
+  bidirectional: false
+  clip_eigs: false
+  step_rescale: 1.0
+  use_parallel_scan: false
+  prenorm: true
+  norm_type: batch
+
+classifier:
+  hidden_dims: 256
+  activation: gelu
+  dropout: 0.1
