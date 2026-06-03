@@ -21,7 +21,6 @@ from tqdm.auto import tqdm
 from rqf_models.cells.implementations.organics_cell import ORGaNICsCell
 from rqf_models.cells.state import ORGaNICsState
 from rqf_models.backbones.rqf import PureRQFEncoder, S4RQFEncoder
-from rqf_models.backbones.s4d import S4DEncoder
 from rqf_models.backbones.s5 import S5Encoder
 
 
@@ -432,20 +431,6 @@ def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:
             tbptt_delayed_input_mode=str(
                 getattr(cfg.training, "tbptt_delayed_input_mode", "strict")
             ),
-            **kwargs,
-        )
-    elif cfg.model.encoder == "s4d":
-        encoder = S4DEncoder(
-            input_dims=input_dims,
-            output_dims=output_dims,
-            d_model=hidden_width,
-            num_layers=depth,
-            skip_connection=skip_connection,
-            prospective_input=bool(cfg.model.prospective_input),
-            prospective_tau=get_model_cfg(cfg, "prospective_tau"),
-            prospective_tau_multiplier=get_model_cfg(cfg, "prospective_tau_multiplier"),
-            prospective_initial=str(cfg.model.prospective_initial),
-            prospective_feedthrough=bool(cfg.model.prospective_feedthrough),
             **kwargs,
         )
     elif cfg.model.encoder == "s5":
