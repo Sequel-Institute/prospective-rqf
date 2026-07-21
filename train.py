@@ -441,12 +441,12 @@ def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:
             num_layers=depth,
             skip_connection=skip_connection,
             prospective_input=bool(cfg.model.prospective_input),
-            prospective_tau=get_model_cfg(cfg, "prospective_tau"),
-            prospective_tau_multiplier=get_model_cfg(cfg, "prospective_tau_multiplier"),
+            prospective_mode=str(get_model_cfg(cfg, "prospective_mode", "direct")),
+            prospective_horizon_multiplier=float(
+                get_model_cfg(cfg, "prospective_horizon_multiplier", 5.0)
+            ),
             prospective_initial=str(cfg.model.prospective_initial),
             prospective_feedthrough=bool(cfg.model.prospective_feedthrough),
-            prospective_input_gain=bool(get_model_cfg(cfg, "prospective_input_gain", False)),
-            min_input_gain=float(get_model_cfg(cfg, "min_input_gain", 1e-6)),
             scan_grad_mode=str(cfg.training.scan_grad_mode),
             **kwargs,
         )

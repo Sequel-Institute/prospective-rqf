@@ -1,0 +1,37 @@
+name: alpha_p_s5
+encoder: s5
+family: ssm
+
+depth: 6
+hidden_width: 48
+output_dims: 64
+skip_connection: false
+
+# alphaP-S5 (Model 2): use G_alpha @ W_in with
+# G_alpha = diag(-Re(Lambda_eff)) and tau = c * input_dt.
+prospective_input: true
+prospective_mode: decay_gain
+prospective_horizon_multiplier: 5.0
+prospective_initial: zero
+prospective_feedthrough: false
+
+encoder_kwargs:
+  d_state: 48
+  blocks: 8
+  dropout: 0.0
+  dt_min: 0.001
+  dt_max: 0.1
+  discretization: zoh
+  activation: half_glu1
+  conj_sym: true
+  bidirectional: false
+  clip_eigs: true
+  step_rescale: 1.0
+  use_parallel_scan: false
+  prenorm: true
+  norm_type: batch
+
+classifier:
+  hidden_dims: 256
+  activation: gelu
+  dropout: 0.1

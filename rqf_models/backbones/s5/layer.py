@@ -55,7 +55,19 @@ def _discretize_bilinear(
 
 
 class S5Layer(nn.Module):
-    """Single S5 sequence layer operating on ``(B, T, H)`` real tensors."""
+    """Single S5 sequence layer operating on ``(B, T, H)`` real tensors.
+
+    Prospective input uses the exact impulse-ZOH two-tap recurrence for the
+    shared physical horizon ``tau = c * input_dt``. Native S5 represents each
+    mode on a learned local clock ``delta[p]``; after converting from the
+    shared input clock, the coefficient multiplying the boundary impulse is
+    therefore ``c * delta[p]``.
+
+    ``prospective_mode="direct"`` leaves the learned continuous-time input
+    matrix unchanged. ``prospective_mode="decay_gain"`` interprets that
+    learned matrix as ``W_in`` and uses ``diag(-Re(Lambda)) @ W_in``, matching
+    the input-gain structure of an RQF.
+    """
 
     def __init__(
         self,
@@ -73,31 +85,43 @@ class S5Layer(nn.Module):
         step_rescale: float = 1.0,
         use_parallel_scan: bool = False,
         prospective_input: bool = False,
-        prospective_tau: float | list[float] | torch.Tensor | None = None,
-        prospective_tau_multiplier: float | list[float] | torch.Tensor | None = None,
+        prospective_mode: str = "direct",
+        prospective_horizon_multiplier: float = 5.0,
         prospective_initial: str = "zero",
         prospective_feedthrough: bool = False,
-        prospective_input_gain: bool = False,
-        min_input_gain: float = 1e-6,
         scan_grad_mode: str = "full",
     ) -> None:
         super().__init__()
-        use_prospective_input = prospective_input or prospective_input_gain
         if discretization not in {"zoh", "bilinear"}:
             raise ValueError(f"Unsupported S5 discretization: {discretization!r}")
-        if use_prospective_input and discretization != "zoh":
+        if prospective_input and discretization != "zoh":
             raise ValueError(
                 "prospective input for S5 uses the impulse-ZOH discretization and is "
                 "only supported with discretization='zoh'."
             )
         if activation not in {"gelu", "full_glu", "half_glu1", "half_glu2"}:
             raise ValueError(f"Unsupported S5 activation: {activation!r}")
-        if prospective_tau is not None and prospective_tau_multiplier is not None:
-            raise ValueError("Set either prospective_tau or prospective_tau_multiplier, not both.")
+        if prospective_mode not in {"direct", "decay_gain"}:
+            raise ValueError(
+                "prospective_mode must be 'direct' or 'decay_gain', "
+                f"got {prospective_mode!r}"
+            )
+        if prospective_mode == "decay_gain" and not prospective_input:
+            raise ValueError(
+                "prospective_mode='decay_gain' defines alphaP-S5 and requires "
+                "prospective_input=True."
+            )
+        if prospective_mode == "decay_gain" and not clip_eigs:
+            raise ValueError(
+                "prospective_mode='decay_gain' requires clip_eigs=True so "
+                "alpha=-Re(Lambda) remains strictly positive."
+            )
+        if not math.isfinite(prospective_horizon_multiplier):
+            raise ValueError("prospective_horizon_multiplier must be finite")
+        if prospective_horizon_multiplier <= 0.0:
+            raise ValueError("prospective_horizon_multiplier must be positive")
         if prospective_initial not in {"zero", "repeat"}:
             raise ValueError("prospective_initial must be 'zero' or 'repeat'")
-        if min_input_gain <= 0.0:
-            raise ValueError("min_input_gain must be positive")
         if prospective_feedthrough:
             raise NotImplementedError(
                 "S5 prospective_feedthrough=True is not implemented; the notes specify "
@@ -109,7 +133,7 @@ class S5Layer(nn.Module):
                 "S5 scan_grad_mode='tbptt1' is currently supported only with "
                 "use_parallel_scan=True."
             )
-        if scan_grad_mode == "tbptt1" and use_prospective_input:
+        if scan_grad_mode == "tbptt1" and prospective_input:
             raise ValueError(
                 "S5 scan_grad_mode='tbptt1' is currently supported only for non-prospective input."
             )
@@ -124,13 +148,11 @@ class S5Layer(nn.Module):
         self.clip_eigs = clip_eigs
         self.step_rescale = step_rescale
         self.use_parallel_scan = use_parallel_scan
-        self.prospective_input = use_prospective_input
-        self.prospective_tau = prospective_tau
-        self.prospective_tau_multiplier = prospective_tau_multiplier
+        self.prospective_input = prospective_input
+        self.prospective_mode = prospective_mode
+        self.prospective_horizon_multiplier = prospective_horizon_multiplier
         self.prospective_initial = prospective_initial
         self.prospective_feedthrough = prospective_feedthrough
-        self.prospective_input_gain = prospective_input_gain
-        self.min_input_gain = min_input_gain
         self.scan_grad_mode = scan_grad_mode
 
         lambda_init, v, vinv, local_p = make_s5_dplr_init(
@@ -187,18 +209,16 @@ class S5Layer(nn.Module):
     def _delta(self) -> torch.Tensor:
         return self.step_rescale * torch.exp(self.log_step)
 
-    def _input_gain_from_lambda(self, lambda_c: torch.Tensor) -> torch.Tensor:
-        return torch.clamp(-lambda_c.real, min=self.min_input_gain)
-
-    def _prospective_b_tilde(
+    def _prospective_input_matrix(
         self,
         lambda_c: torch.Tensor,
-        b_tilde: torch.Tensor,
+        learned_input: torch.Tensor,
     ) -> torch.Tensor:
-        if not self.prospective_input_gain:
-            return b_tilde
-        gain = self._input_gain_from_lambda(lambda_c).to(b_tilde.dtype)
-        return gain.unsqueeze(-1) * b_tilde
+        """Return Model 1's ``B_tilde`` or Model 2's ``G_alpha @ W_in``."""
+        if self.prospective_mode == "direct":
+            return learned_input
+        alpha = (-lambda_c.real).to(learned_input.dtype)
+        return alpha.unsqueeze(-1) * learned_input
 
     def _discretize(self) -> tuple[torch.Tensor, torch.Tensor]:
         lambda_c = self._lambda()
@@ -208,65 +228,20 @@ class S5Layer(nn.Module):
             return _discretize_zoh(lambda_c, b_tilde, delta)
         return _discretize_bilinear(lambda_c, b_tilde, delta)
 
-    def _prospective_tau_like(
-        self,
-        delta: torch.Tensor,
-        b_tilde: torch.Tensor,
-    ) -> torch.Tensor:
-        mode_count = delta.numel()
-        target_shape = tuple(b_tilde.shape)
-        if self.prospective_tau is None:
-            multiplier_value = (
-                1.0 if self.prospective_tau_multiplier is None else self.prospective_tau_multiplier
-            )
-            multiplier = self._broadcast_prospective_value(
-                multiplier_value,
-                delta,
-                target_shape,
-                mode_count,
-                "prospective_tau_multiplier",
-            )
-            tau = multiplier * delta.view(mode_count, 1)
-        else:
-            tau = self._broadcast_prospective_value(
-                self.prospective_tau,
-                delta,
-                target_shape,
-                mode_count,
-                "prospective_tau",
-            )
-        return tau
-
-    @staticmethod
-    def _broadcast_prospective_value(
-        value: float | list[float] | torch.Tensor,
-        reference: torch.Tensor,
-        target_shape: tuple[int, ...],
-        mode_count: int,
-        name: str,
-    ) -> torch.Tensor:
-        value_tensor = torch.as_tensor(value, dtype=reference.dtype, device=reference.device)
-        if value_tensor.ndim == 1 and value_tensor.numel() == mode_count:
-            value_tensor = value_tensor.unsqueeze(-1)
-        try:
-            torch.broadcast_shapes(tuple(value_tensor.shape), target_shape)
-        except RuntimeError as exc:
-            raise ValueError(
-                f"{name} must be scalar, per-mode, per-channel, or broadcastable "
-                f"to S5 B_tilde shape {target_shape}; got {tuple(value_tensor.shape)}"
-            ) from exc
-        return torch.broadcast_to(value_tensor, target_shape)
-
     def _discretize_prospective(
         self,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         lambda_c = self._lambda()
-        b_raw = _complex_from_parts(self.B_re, self.B_im)
-        b_tilde = self._prospective_b_tilde(lambda_c, b_raw)
+        learned_input = _complex_from_parts(self.B_re, self.B_im)
+        continuous_input = self._prospective_input_matrix(lambda_c, learned_input)
         delta = self._delta()
-        lambda_bar, b_bar = _discretize_zoh(lambda_c, b_tilde, delta)
-        tau = self._prospective_tau_like(delta, b_tilde)
-        correction = tau * lambda_bar.unsqueeze(-1) * b_tilde
+        lambda_bar, b_bar = _discretize_zoh(lambda_c, continuous_input, delta)
+
+        # On the shared physical input clock tau = c * input_dt. Native S5
+        # uses Lambda_eff = diag(delta / input_dt) @ Lambda_0, so the input_dt
+        # factors cancel and the exact impulse coefficient is c * delta.
+        native_horizon = self.prospective_horizon_multiplier * delta.unsqueeze(-1)
+        correction = native_horizon * lambda_bar.unsqueeze(-1) * continuous_input
         b_plus = b_bar + correction
         b_minus = -correction
         return lambda_bar, b_plus, b_minus
@@ -397,12 +372,10 @@ class S5Block(nn.Module):
         skip_connection: bool = True,
         norm_type: str = "layer",
         prospective_input: bool = False,
-        prospective_tau: float | list[float] | torch.Tensor | None = None,
-        prospective_tau_multiplier: float | list[float] | torch.Tensor | None = None,
+        prospective_mode: str = "direct",
+        prospective_horizon_multiplier: float = 5.0,
         prospective_initial: str = "zero",
         prospective_feedthrough: bool = False,
-        prospective_input_gain: bool = False,
-        min_input_gain: float = 1e-6,
         scan_grad_mode: str = "full",
     ) -> None:
         super().__init__()
@@ -431,12 +404,10 @@ class S5Block(nn.Module):
             step_rescale=step_rescale,
             use_parallel_scan=use_parallel_scan,
             prospective_input=prospective_input,
-            prospective_tau=prospective_tau,
-            prospective_tau_multiplier=prospective_tau_multiplier,
+            prospective_mode=prospective_mode,
+            prospective_horizon_multiplier=prospective_horizon_multiplier,
             prospective_initial=prospective_initial,
             prospective_feedthrough=prospective_feedthrough,
-            prospective_input_gain=prospective_input_gain,
-            min_input_gain=min_input_gain,
             scan_grad_mode=scan_grad_mode,
         )
 

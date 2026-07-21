@@ -33,12 +33,10 @@ class S5Encoder(nn.Module):
         skip_connection: bool = True,
         norm_type: str = "layer",
         prospective_input: bool = False,
-        prospective_tau: float | list[float] | torch.Tensor | None = None,
-        prospective_tau_multiplier: float | list[float] | torch.Tensor | None = None,
+        prospective_mode: str = "direct",
+        prospective_horizon_multiplier: float = 5.0,
         prospective_initial: str = "zero",
         prospective_feedthrough: bool = False,
-        prospective_input_gain: bool = False,
-        min_input_gain: float = 1e-6,
         scan_grad_mode: str = "full",
     ) -> None:
         super().__init__()
@@ -64,12 +62,10 @@ class S5Encoder(nn.Module):
                     skip_connection=skip_connection,
                     norm_type=norm_type,
                     prospective_input=prospective_input,
-                    prospective_tau=prospective_tau,
-                    prospective_tau_multiplier=prospective_tau_multiplier,
+                    prospective_mode=prospective_mode,
+                    prospective_horizon_multiplier=prospective_horizon_multiplier,
                     prospective_initial=prospective_initial,
                     prospective_feedthrough=prospective_feedthrough,
-                    prospective_input_gain=prospective_input_gain,
-                    min_input_gain=min_input_gain,
                     scan_grad_mode=scan_grad_mode,
                 )
                 for _ in range(num_layers)
