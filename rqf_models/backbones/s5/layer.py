@@ -133,10 +133,6 @@ class S5Layer(nn.Module):
                 "S5 scan_grad_mode='tbptt1' is currently supported only with "
                 "use_parallel_scan=True."
             )
-        if scan_grad_mode == "tbptt1" and prospective_input:
-            raise ValueError(
-                "S5 scan_grad_mode='tbptt1' is currently supported only for non-prospective input."
-            )
 
         self.d_model = d_model
         self.d_state = d_state
@@ -311,22 +307,50 @@ class S5Layer(nn.Module):
     ) -> torch.Tensor:
         x_complex = x.to(b_plus.dtype)
         x_prev = self._previous_input(x_complex)
+        if self._use_tbptt1_scan_grad():
+            # Spatial-only backpropagation: the delayed tap u[t-1] is a past
+            # time step of the layer below, so its gradient path is cut (the
+            # strict delayed-input convention used by the RQF backbones). The
+            # current tap u[t] stays live to preserve the within-step spatial
+            # chain, and b_plus/b_minus stay live so Lambda, B and log_step
+            # receive their exact one-step gradients.
+            x_prev = x_prev.detach()
         return torch.einsum("ph,bth->btp", b_plus, x_complex) + torch.einsum(
             "ph,bth->btp", b_minus, x_prev
         )
 
+    def _scan_prospective(
+        self,
+        lambda_bar: torch.Tensor,
+        b_plus: torch.Tensor,
+        b_minus: torch.Tensor,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
+        """Run the prospective (two-tap) S5 scan with full or TBPTT(1) gradients."""
+        drive = self._prospective_drive(b_plus, b_minus, x)
+        if not self._use_tbptt1_scan_grad():
+            return self._scan(lambda_bar, drive)
+
+        with torch.no_grad():
+            states = self._scan(
+                lambda_bar.detach(),
+                drive.detach(),
+            )
+
+        h_prev = self._shift_states(states).detach()
+        rebuild = lambda_bar * h_prev + drive
+        return states + (rebuild - rebuild.detach())
+
     def _ssm(self, x: torch.Tensor) -> torch.Tensor:
         if self.prospective_input:
             lambda_bar, b_plus, b_minus = self._discretize_prospective()
-            drive = self._prospective_drive(b_plus, b_minus, x)
-            states = self._scan(lambda_bar, drive)
+            states = self._scan_prospective(lambda_bar, b_plus, b_minus, x)
         else:
             lambda_bar, b_bar = self._discretize()
             states = self._scan_nonprospective(lambda_bar, b_bar, x)
         if self.bidirectional:
             if self.prospective_input:
-                drive_bwd = self._prospective_drive(b_plus, b_minus, x.flip(1))
-                states_bwd = self._scan(lambda_bar, drive_bwd).flip(1)
+                states_bwd = self._scan_prospective(lambda_bar, b_plus, b_minus, x.flip(1)).flip(1)
             else:
                 states_bwd = self._scan_nonprospective(lambda_bar, b_bar, x.flip(1)).flip(1)
             states = torch.cat([states, states_bwd], dim=-1)
