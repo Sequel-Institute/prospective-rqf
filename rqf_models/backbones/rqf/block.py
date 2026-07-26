@@ -34,6 +34,17 @@ try:
 except ImportError:
     _HAS_FUSED_MULTI_OSC = False
 
+# Fused two-tap prospective scan (optional, requires Triton + CUDA). Folds the
+# drive tap0*u[n] + tap1*u[n-1] into the scan kernel itself, so the prospective
+# path costs the same single fused pass as the non-prospective one (no
+# materialised drive tensor, no shift).
+try:
+    from rqf_models.ops.chunked_scan_kernel import _triton_chunked_scan_prospective
+
+    _HAS_FUSED_PROSPECTIVE = True
+except ImportError:
+    _HAS_FUSED_PROSPECTIVE = False
+
 
 def _halfwave_rectify_4ch(z: torch.Tensor) -> torch.Tensor:
     """Half-wave rectified 4-channel decomposition.
@@ -901,6 +912,16 @@ class BaseRQFBlock(BackboneBase):
         """
         C2_ones = torch.ones_like(C1)
         if not self._use_tbptt1_scan_grad():
+            if (
+                _HAS_FUSED_PROSPECTIVE
+                and u.is_cuda
+                and u.is_complex()
+                and tap0.dim() == 1
+                and tap1.dim() == 1
+            ):
+                # Fused two-tap kernel: identical recurrence, but the drive is
+                # formed inside the scan (no drive tensor, no lag-1 shift).
+                return _triton_chunked_scan_prospective(C1, tap0, tap1, u)
             drive = self._apply_prospective_taps(u, tap0, tap1)
             return self._scan(drive, C1, C2_ones)
 

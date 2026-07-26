@@ -38,12 +38,21 @@ import torch
 # Set ORGANICS_DISABLE_TRITON=1 to force PyTorch fallback (useful for debugging)
 _TRITON_DISABLED = os.environ.get("ORGANICS_DISABLE_TRITON", "0") == "1"
 
+# Backend for the CUDA scan path: "chunked" (default, two-level chunked
+# parallel scan — in-block Blelloch within each chunk plus a serial carry —
+# with a chunked parallel backward) or "sequential" (the legacy O(T)
+# one-block-per-(batch,filter) fused recurrence). Set
+# ORGANICS_SCAN_BACKEND=sequential to force the legacy path, e.g. for
+# step-by-step streaming/generation or numerical A/B comparison.
+_SCAN_BACKEND = os.environ.get("ORGANICS_SCAN_BACKEND", "chunked").lower()
+
 # Maximum input features supported by Triton B-matrix kernels.
 # Limited by Triton's tl.load block size for loading B matrix rows into SRAM.
 # For larger input_features, falls back to PyTorch sequential scan.
 _TRITON_MAX_INPUT_FEATURES = 1024
 
 try:
+    from rqf_models.ops.chunked_scan_kernel import _triton_chunked_scan
     from rqf_models.ops.triton_scan_kernel import (
         _sequential_scan_forward_abs_raw_block_f,
         _sequential_scan_real_forward_abs_raw_block_f,
@@ -57,6 +66,8 @@ try:
     _HAS_TRITON = True and not _TRITON_DISABLED
 except ImportError:
     _HAS_TRITON = False
+
+_USE_CHUNKED = _SCAN_BACKEND == "chunked"
 
 
 def _pad_to_power_of_two(
@@ -348,6 +359,12 @@ def sequential_scan(  # noqa: CCR001
     if scan_device.type == "cuda" and _HAS_TRITON:
         if use_matrix and in_filters <= _TRITON_MAX_INPUT_FEATURES:
             return _triton_sequential_scan_b_matrix(C1, C2, u, B)
+        elif not use_matrix and _USE_CHUNKED:
+            # Chunked two-level scan: much higher occupancy than the legacy
+            # one-block-per-(batch,filter) kernel at long T. Complex-only
+            # kernel; real inputs are promoted to complex first.
+            u_c = u if input_is_complex else real_u.to(torch.cfloat)
+            return _triton_chunked_scan(C1, C2, u_c)
         elif not use_matrix and not input_is_complex:
             return _triton_sequential_scan_real(C1, C2, real_u)
         elif not use_matrix:
@@ -485,6 +502,11 @@ def parallel_scan(
     # Note: B matrix support exists in sequential_scan via Triton selective scan kernels
     # For parallel scan with B matrix, we use PyTorch Blelloch scan (still O(log T) parallel)
     if u_projected.is_cuda and _HAS_TRITON and not use_matrix:
+        if _USE_CHUNKED:
+            # Same chunked kernel as the sequential path: it is itself a
+            # two-level parallel scan, so it subsumes the Blelloch kernel.
+            u_c = u_projected if input_is_complex else u_projected.to(torch.cfloat)
+            return _triton_chunked_scan(C1, C2, u_c)
         if not input_is_complex:
             return _triton_parallel_scan_real(C1, C2, u_projected)
         return _triton_parallel_scan(C1, C2, u_projected)
