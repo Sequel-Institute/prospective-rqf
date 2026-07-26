@@ -12,6 +12,7 @@ The code includes:
 
 - standalone Pure RQF encoders;
 - RQF-S4 encoders;
+- S5 baseline encoders;
 - discrete ORGaNICs recurrent baselines;
 - Hydra configs for raw waveform and MFCC Speech Commands inputs;
 - Hydra configs for full BPTT and spatial-only backpropagation;
@@ -31,6 +32,20 @@ current bottom-up layer input is passed directly to the next recurrent layer.
 bottom-up input is advanced with the look-ahead operator
 `chi_tau = 1 + tau d/dt`. In code this is implemented as the derived two-tap
 input path.
+
+S5 exposes two exact prospective definitions with the shared physical horizon
+`tau = c * input_dt` and `c=5` by default. Native learned S5 steps convert this
+to the modal impulse coefficient `c * delta[p]`:
+
+- `model=s5` selects **P-S5**, the default `prospective_mode=direct`, which
+  applies the prospective operator to the ordinary learned S5 input matrix.
+  Set `model.prospective_input=false` for the non-prospective S5 control.
+- `model=alpha_p_s5` selects **alphaP-S5**, the named
+  `prospective_mode=decay_gain`, which uses
+  `diag(-Re(Lambda_eff)) @ W_in` as the continuous-time input matrix.
+
+Both definitions leave the direct `D * u` feedthrough instantaneous and use
+the fixed `prospective_initial` boundary convention (`zero` by default).
 
 `training=full_bptt` is standard full backpropagation through time, with
 gradients propagated through the full recurrent trajectory. `training=tbptt_local_loss`
