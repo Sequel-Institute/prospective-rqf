@@ -171,28 +171,56 @@ class RQF(nn.Module):
         tau: float | Sequence[float] | None = None,
         dt: float = 0.0001,
         learn_tau: bool = False,
+        learn_freq: bool = True,
+        learn_gamma: bool = True,
         gamma: float | None = None,
         freq: float | None = None,
         min_gamma: float | Sequence[float] = 0.01,
         max_gamma: float | Sequence[float] = 0.2,
         min_freq: float | Sequence[float] = 1.0,
         max_freq: float | Sequence[float] = 50.0,
+        seq_duration: float | None = None,
+        filter_max_freq_factor: float = 1.0,
+        param_space: str = "sigmoid",
         discretization: DiscretizationType = "euler",
         use_b_matrix: bool = False,
         input_features: int = 1,
         clamp_gamma: bool = False,
     ) -> None:
-        """Initialize the RQF parameter module."""
+        """Initialize the RQF parameter module.
+
+        ``param_space`` selects the leaf parametrization:
+
+        - ``"sigmoid"`` (default): logit leaves, gamma/freq bounded via
+          sigmoid into ``[min, max]`` at every read.
+        - ``"log"``: log-space leaves ``log_theta`` (theta = 2*pi*freq*tau)
+          and ``log_gamma``, mirroring ``log_tau``: updates are multiplicative
+          and O(1) across the frequency range; bounds are enforced by calling
+          :meth:`clamp_parameters` after each optimizer step. With
+          ``seq_duration`` set (the resonant recipe), the frequency band is
+          derived as ``[1/T, 1/tau]`` (theta in ``[2*pi*tau/T, 2*pi]``), the
+          gamma band is ``~[0, 1]``, and ``log_theta`` is initialized
+          log-uniformly in ``[log(2*pi*tau/T), log(2*pi*filter_max_freq_factor)]``.
+        """
         super().__init__()
         valid_discretizations = ("euler", "zoh", "bilinear", "foh")
         if discretization not in valid_discretizations:
             raise ValueError(
                 f"discretization must be one of {valid_discretizations}, got {discretization!r}"
             )
+        if param_space not in ("sigmoid", "log"):
+            raise ValueError(f"param_space must be 'sigmoid' or 'log', got {param_space!r}")
+        if seq_duration is not None and param_space != "log":
+            raise ValueError("seq_duration (resonant recipe) requires param_space='log'")
 
         self.num_filters = num_filters
         self.dt = dt
         self.learn_tau = learn_tau
+        self.learn_freq = learn_freq
+        self.learn_gamma = learn_gamma
+        self.param_space = param_space
+        self.seq_duration = seq_duration
+        self.filter_max_freq_factor = filter_max_freq_factor
         self.discretization = discretization
         self.use_b_matrix = use_b_matrix
         self.input_features = input_features
@@ -206,17 +234,48 @@ class RQF(nn.Module):
                 stacklevel=2,
             )
 
+        tau_tensor = self._to_buffer(tau, num_filters)
+
+        # Resolve the frequency / damping bounds. In the resonant recipe
+        # (seq_duration set) the bands derive from T and tau and the passed
+        # Hz/gamma bound args are ignored.
+        recipe = seq_duration is not None
+        if recipe:
+            min_freq_t = self._to_buffer(1.0 / seq_duration, num_filters)
+            max_freq_t = 1.0 / tau_tensor  # per-filter; theta clamp ceiling = 2*pi
+            min_gamma_t = self._to_buffer(1e-6, num_filters)
+            max_gamma_t = self._to_buffer(1.0 - 1e-6, num_filters)
+        else:
+            min_freq_t = self._to_buffer(min_freq, num_filters)
+            max_freq_t = self._to_buffer(max_freq, num_filters)
+            min_gamma_t = self._to_buffer(min_gamma, num_filters)
+            max_gamma_t = self._to_buffer(max_gamma, num_filters)
+
         # Store bounds as registered buffers (saved in state_dict, auto device transfer)
-        self.register_buffer("_min_gamma", self._to_buffer(min_gamma, num_filters))
-        self.register_buffer("_max_gamma", self._to_buffer(max_gamma, num_filters))
-        self.register_buffer("_min_freq", self._to_buffer(min_freq, num_filters))
-        self.register_buffer("_max_freq", self._to_buffer(max_freq, num_filters))
+        self.register_buffer("_min_gamma", min_gamma_t)
+        self.register_buffer("_max_gamma", max_gamma_t)
+        self.register_buffer("_min_freq", min_freq_t)
+        self.register_buffer("_max_freq", max_freq_t)
 
         # Time constant parameter (log-transformed, per-filter)
-        tau_tensor = self._to_buffer(tau, num_filters)
         self.log_tau = nn.Parameter(torch.log(tau_tensor), requires_grad=learn_tau)
 
-        # Frequency parameter (logit-transformed for bounded optimization)
+        if param_space == "log":
+            self._init_log_space(gamma, freq, tau_tensor, recipe)
+        else:
+            self._init_sigmoid_space(gamma, freq, tau_tensor)
+
+        # Optional B matrix for multi-dimensional input projection
+        if use_b_matrix:
+            # Initialize with Lecun normal: std = 1 / sqrt(input_features)
+            std = 1.0 / np.sqrt(input_features)
+            self.B = nn.Parameter(torch.randn(num_filters, input_features) * std)
+        else:
+            self.B = None
+
+    def _init_sigmoid_space(self, gamma, freq, tau_tensor) -> None:
+        """Logit leaves bounded via sigmoid (the original parametrization)."""
+        num_filters = self.num_filters
         if freq is None:
             freq_init_val = self._min_freq + torch.rand(num_filters) * (
                 self._max_freq - self._min_freq
@@ -225,7 +284,10 @@ class RQF(nn.Module):
             freq_init_val = torch.full((num_filters,), freq)
 
         scaled_freq = (freq_init_val - self._min_freq) / (self._max_freq - self._min_freq)
-        self.freq_param = nn.Parameter(torch.logit(torch.clamp(scaled_freq, 1e-6, 1.0 - 1e-6)))
+        self.freq_param = nn.Parameter(
+            torch.logit(torch.clamp(scaled_freq, 1e-6, 1.0 - 1e-6)),
+            requires_grad=self.learn_freq,
+        )
 
         # Warn when freq * tau >= 1 (some filters may become low-pass-like)
         with torch.no_grad():
@@ -249,15 +311,88 @@ class RQF(nn.Module):
             gamma_init_val = torch.full((num_filters,), gamma)
 
         scaled_gamma = (gamma_init_val - self._min_gamma) / (self._max_gamma - self._min_gamma)
-        self.gamma_param = nn.Parameter(torch.logit(torch.clamp(scaled_gamma, 1e-6, 1.0 - 1e-6)))
+        self.gamma_param = nn.Parameter(
+            torch.logit(torch.clamp(scaled_gamma, 1e-6, 1.0 - 1e-6)),
+            requires_grad=self.learn_gamma,
+        )
 
-        # Optional B matrix for multi-dimensional input projection
-        if use_b_matrix:
-            # Initialize with Lecun normal: std = 1 / sqrt(input_features)
-            std = 1.0 / np.sqrt(input_features)
-            self.B = nn.Parameter(torch.randn(num_filters, input_features) * std)
+    def _init_log_space(self, gamma, freq, tau_tensor, recipe: bool) -> None:
+        """Log-space leaves ``log_theta``/``log_gamma`` (multiplicative updates).
+
+        theta = 2*pi*freq*tau is the dimensionless discrete pole angle, an O(1)
+        quantity, so learning ``log_theta`` keeps frequency updates
+        multiplicative and the gradient O(1) across the whole resonant range.
+        Bounds are enforced post-step by :meth:`clamp_parameters`.
+        """
+        num_filters = self.num_filters
+        if freq is not None:
+            log_theta_init = torch.log(2 * np.pi * torch.full((num_filters,), freq) * tau_tensor)
+        elif recipe:
+            # Log-uniform init: log_theta ~ Uniform[log(2*pi*tau/T),
+            # log(2*pi*filter_max_freq_factor)]. The init ceiling is a sub-band
+            # of the clamp ceiling 2*pi.
+            log_theta_min = torch.log(2 * np.pi * tau_tensor / self.seq_duration)
+            log_theta_max = torch.log(
+                torch.full((num_filters,), 2 * np.pi * self.filter_max_freq_factor)
+            )
+            u = torch.rand(num_filters)
+            log_theta_init = log_theta_min + u * (log_theta_max - log_theta_min)
         else:
-            self.B = None
+            freq_init = self._min_freq + torch.rand(num_filters) * (self._max_freq - self._min_freq)
+            log_theta_init = torch.log(2 * np.pi * freq_init * tau_tensor)
+
+        self.log_theta = nn.Parameter(log_theta_init, requires_grad=self.learn_freq)
+
+        # Damping learned in log-space (gamma = exp(log_gamma)); critical init.
+        if gamma is None:
+            theta_init = torch.exp(log_theta_init)  # = 2*pi*freq*tau (= omega*tau)
+            gamma_init_val = theta_init / (1.0 + theta_init)
+        else:
+            gamma_init_val = torch.full((num_filters,), gamma)
+        gamma_init_clamped = torch.clamp(gamma_init_val, self._min_gamma, self._max_gamma)
+        self.log_gamma = nn.Parameter(
+            torch.log(gamma_init_clamped.clone().float()),
+            requires_grad=self.learn_gamma,
+        )
+
+    @property
+    def theta(self) -> torch.Tensor:
+        """Dimensionless pole angle ``theta = omega*tau = 2*pi*freq*tau``."""
+        if self.param_space == "log":
+            return torch.exp(self.log_theta)
+        return 2 * np.pi * self.freq * self.tau
+
+    @torch.no_grad()
+    def clamp_parameters(self) -> None:
+        """Project log-space leaves back into their valid bands (post-step).
+
+        No-op in the sigmoid parametrization (bounds are intrinsic there).
+        ``log_theta`` is clamped to the [min_freq, max_freq] band (in
+        dimensionless ``log(2*pi*f*tau)`` units); ``log_gamma`` to
+        [log(min_gamma), log(max_gamma)]. With ``clamp_gamma``, gamma is
+        additionally projected strictly inside the dynamic stability band
+        [gamma_min(theta), gamma_crit(theta)] so the gradient stays alive for
+        filters that touch the boundary.
+        """
+        if self.param_space != "log":
+            return
+        tau = self.tau
+        self.log_theta.clamp_(
+            min=torch.log(2 * np.pi * self._min_freq * tau),
+            max=torch.log(2 * np.pi * self._max_freq * tau),
+        )
+        self.log_gamma.clamp_(min=torch.log(self._min_gamma), max=torch.log(self._max_gamma))
+        if self.clamp_gamma:
+            omega_tau = self.log_theta.exp()
+            gamma_min = 1 - 1 / torch.sqrt(1 + omega_tau**2)
+            gamma_crit = omega_tau / (1 + omega_tau)
+            eps = 1e-6
+            self.log_gamma.copy_(
+                torch.minimum(
+                    torch.maximum(self.log_gamma, gamma_min.clamp_min(1e-12).log() + eps),
+                    gamma_crit.log() - eps,
+                )
+            )
 
     @property
     def tau(self) -> torch.Tensor:
@@ -274,9 +409,12 @@ class RQF(nn.Module):
         """Damping coefficient (gamma) controlling filter response.
 
         Returns:
-            Damping coefficient, shape (num_filters,). Bounded in
-            [min_gamma, max_gamma] via sigmoid transformation.
+            Damping coefficient, shape (num_filters,). Sigmoid space: bounded
+            in [min_gamma, max_gamma] at every read. Log space:
+            ``exp(log_gamma)``, bounded post-step by :meth:`clamp_parameters`.
         """
+        if self.param_space == "log":
+            return torch.exp(self.log_gamma)
         return self._min_gamma + (self._max_gamma - self._min_gamma) * torch.sigmoid(
             self.gamma_param
         )
@@ -286,9 +424,12 @@ class RQF(nn.Module):
         """Oscillation frequency of the filter in Hz.
 
         Returns:
-            Frequency in Hz, shape (num_filters,). Bounded in
-            [min_freq, max_freq] via sigmoid transformation.
+            Frequency in Hz, shape (num_filters,). Sigmoid space: bounded in
+            [min_freq, max_freq] at every read. Log space: derived from the
+            trainable ``theta = 2*pi*freq*tau``.
         """
+        if self.param_space == "log":
+            return self.theta / (2 * np.pi * self.tau)
         return self._min_freq + (self._max_freq - self._min_freq) * torch.sigmoid(self.freq_param)
 
     def compute_coefficients(self) -> tuple[torch.Tensor, torch.Tensor]:

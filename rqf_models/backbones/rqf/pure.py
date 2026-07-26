@@ -14,6 +14,7 @@ Example::
 """
 
 import math
+import os
 from typing import Any
 
 import torch
@@ -21,6 +22,24 @@ import torch.nn as nn
 
 from rqf_models.backbones.rqf.block import BaseRQFBlock
 from rqf_models.backbones.rqf.encoder import BaseRQFEncoder
+from rqf_models.backbones.rqf.utils.activations import SplitReLU
+from rqf_models.backbones.rqf.utils.init import init_complex_weight_, rqf_forward_std
+from rqf_models.ops import scan as _scan_module
+
+# Channel-outermost fused prospective scan (optional, requires Triton + CUDA).
+# Runs each block's projection as one 2D complex GEMM and the two-tap scan in
+# (filters, batch, time) layout with the drive (and optionally split-relu)
+# fused into the kernel — no per-layer time-axis permutes.
+try:
+    from rqf_models.ops.fbt_scan_kernel import fbt_prospective_scan, fbt_recompute_scan
+
+    _HAS_FBT_PROSPECTIVE = True
+except ImportError:
+    _HAS_FBT_PROSPECTIVE = False
+
+# Grid size (filters * batch) above which the fused split-relu scan recomputes
+# the raw state in the backward instead of storing it (lower peak memory).
+_FBT_RECOMPUTE_MIN_GRID = 256
 
 
 class PureRQFBlock(BaseRQFBlock):
@@ -47,6 +66,11 @@ class PureRQFBlock(BaseRQFBlock):
     def __init__(self, d_model: int, complex_weights: bool = True, **kwargs: Any) -> None:
         d_out = kwargs.get("d_model_out") or d_model
         super().__init__(d_model=d_model, num_filters=d_out, **kwargs)
+
+        # Whether to apply the split activation on this block's output. The
+        # encoder clears this on the last block when ``final_activation=False``
+        # so the readout consumes the raw complex scan state.
+        self.apply_activation = True
 
         if complex_weights:
             std = 1.0 / math.sqrt(d_model)
@@ -83,6 +107,56 @@ class PureRQFBlock(BaseRQFBlock):
 
         c_weights = self.c_weights_fwd if self._has_c_weights else None
         y = self._scan_direction(z, self.rqf_fwd, c_weights, delayed_x=delayed_z, flip=False)
+        return self.act(y) if self.apply_activation else y
+
+    def _fbt_eligible(self) -> bool:
+        """Whether this block supports the channel-outermost fused path.
+
+        Requires the single-oscillator, unidirectional, prospective two-tap,
+        full-gradient configuration (no C-weight oscillator combination) with a
+        complex weight, which the fused ``(filters, batch, time)`` scan
+        implements.
+        """
+        return (
+            self.prospective_input
+            and not self.bidirectional
+            and not self._has_c_weights
+            and self.scan_filters == self.num_filters
+            and self.scan_grad_mode == "full"
+            and self.W.is_complex()
+        )
+
+    def _forward_fbt(self, h: torch.Tensor) -> torch.Tensor:
+        """Forward in channel-outermost ``(filters, batch, time)`` layout.
+
+        Projection is a single 2D complex GEMM ``W @ H`` on the free view
+        ``(d_model, batch*time)``; the fused scan drives and (for split-relu)
+        activates without permuting the time axis. Equivalent to
+        :meth:`forward` on the transposed input.
+        """
+        d_model, batch, time = h.shape
+        W_c = self.W.to(torch.complex64)
+        d_out = W_c.shape[0]
+        z = torch.matmul(W_c, h.reshape(d_model, batch * time)).reshape(d_out, batch, time)
+
+        C1, tap0, tap1 = self.rqf_fwd.compute_two_tap_coefficients(
+            prospective=self.prospective_input,
+            mode=self.prospective_mode,
+            prospective_tau=self.prospective_tau,
+        )
+        C1 = C1.to(torch.cfloat)
+        tap0 = tap0.to(torch.cfloat)
+        tap1 = tap1.to(torch.cfloat)
+        fuse = self.apply_activation and isinstance(self.act, SplitReLU)
+        if fuse and d_out * batch >= _FBT_RECOMPUTE_MIN_GRID:
+            # Large grid: recompute the raw state in the backward instead of
+            # storing it (lower peak memory, same split-relu output).
+            return fbt_recompute_scan(C1, tap0, tap1, z)
+        y = fbt_prospective_scan(C1, tap0, tap1, z, fuse_act=fuse)
+        # Split activations are pointwise, so they apply unchanged in this
+        # layout; split-relu is already folded into the scan when ``fuse``.
+        if fuse or not self.apply_activation:
+            return y
         return self.act(y)
 
 
@@ -159,6 +233,13 @@ class PureRQFEncoder(BaseRQFEncoder):
         prospective_tau: float | list[float] | None = None,
         skip_connection: bool | None = None,
         scan_grad_mode: str = "full",
+        param_space: str = "sigmoid",
+        seq_duration: float | None = None,
+        filter_max_freq_factor: float = 1.0,
+        w_init: str | float | None = None,
+        final_activation: bool = True,
+        input_proj_bias: bool = True,
+        complex_output: bool = False,
         **legacy_kwargs: Any,
     ) -> None:
         residual_connection = legacy_kwargs.pop("residual_connection", None)
@@ -198,6 +279,9 @@ class PureRQFEncoder(BaseRQFEncoder):
             "prospective_mode": prospective_mode,
             "prospective_tau": prospective_tau,
             "scan_grad_mode": scan_grad_mode,
+            "param_space": param_space,
+            "seq_duration": seq_duration,
+            "filter_max_freq_factor": filter_max_freq_factor,
         }
         super().__init__(
             input_dims=input_dims,
@@ -208,6 +292,45 @@ class PureRQFEncoder(BaseRQFEncoder):
             filter_scales=filter_scales,
         )
         self.skip_connection = bool(skip_connection)
+        # complex_output: return the raw complex features (batch, time, F) and
+        # skip .real / final_norm / output_proj — for external complex readouts.
+        self.complex_output = bool(complex_output)
+
+        # Power-preserving W init recipe. Layer 0 consumes the raw
+        # standardized input (identity gain); deeper layers consume the
+        # inter-layer split activation.
+        if w_init is not None:
+            for idx, block in enumerate(self.blocks):
+                if isinstance(w_init, int | float):
+                    std = float(w_init)
+                elif w_init == "forward":
+                    in_act = "identity" if idx == 0 else activation
+                    std = rqf_forward_std(block.W.shape[1], in_act)
+                else:
+                    raise ValueError(
+                        f"w_init must be None, 'forward', or a float std; got {w_init!r}"
+                    )
+                init_complex_weight_(block.W, std)
+
+        # Raw complex state into the readout: skip the last block's activation.
+        if not final_activation:
+            self.blocks[-1].apply_activation = False
+
+        # Bias-free input projection (removes the learnable DC drive).
+        if not input_proj_bias:
+            self.input_proj.register_parameter("bias", None)
+
+    @torch.no_grad()
+    def clamp_parameters(self) -> None:
+        """Project all blocks' filter parameters into their valid bands.
+
+        Call after each optimizer step when using ``param_space="log"``
+        (no-op for the sigmoid parametrization).
+        """
+        for block in self.blocks:
+            block.rqf_fwd.clamp_parameters()
+            if getattr(block, "rqf_bwd", None) is not None:
+                block.rqf_bwd.clamp_parameters()
 
     @property
     def residual_connection(self) -> bool:
@@ -227,14 +350,20 @@ class PureRQFEncoder(BaseRQFEncoder):
         Returns:
             Real output tensor ``(batch, time, output_dims)``.
         """
-        x = self.input_proj(x)
+        if self._fbt_enabled(x):
+            h = self._forward_fbt_stack(x)
+        else:
+            x = self.input_proj(x)
 
-        h = x.to(torch.complex64)
-        with torch.amp.autocast(x.device.type, enabled=False):
-            for block in self.blocks:
-                out = block(h)
-                # Complex skip: only when shape-preserving (uniform hidden_dims).
-                h = out + h if self.skip_connection and out.shape == h.shape else out
+            h = x.to(torch.complex64)
+            with torch.amp.autocast(x.device.type, enabled=False):
+                for block in self.blocks:
+                    out = block(h)
+                    # Complex skip: only when shape-preserving (uniform hidden_dims).
+                    h = out + h if self.skip_connection and out.shape == h.shape else out
+
+        if self.complex_output:
+            return h
 
         h = h.real
 
@@ -245,3 +374,38 @@ class PureRQFEncoder(BaseRQFEncoder):
                 h = self.final_norm(h)
 
         return self.output_proj(h)
+
+    def _fbt_enabled(self, x: torch.Tensor) -> bool:
+        """Whether the channel-outermost fused path applies to this input."""
+        return (
+            _HAS_FBT_PROSPECTIVE
+            and x.is_cuda
+            and _scan_module._SCAN_BACKEND == "chunked"
+            and os.environ.get("ORGANICS_RQF_FBT", "1") != "0"
+            and all(block._fbt_eligible() for block in self.blocks)
+        )
+
+    def _forward_fbt_stack(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the stack in channel-outermost ``(filters, batch, time)`` layout.
+
+        The input projection is applied channel-first so the ``(d_model,
+        batch, time)`` layout falls straight out of the projection: only the
+        tiny ``input_dims`` axis is permuted, not the large projected tensor,
+        which removes the encoder-entry transpose. Each block then projects
+        with a 2D complex GEMM and runs the fused scan in place (no per-layer
+        time-axis permute); the output is transposed back to ``(batch, time,
+        filters)`` once at exit. Exactly equivalent to the standard path up to
+        linear-op reordering.
+        """
+        batch, time, in_dims = x.shape
+        w_in = self.input_proj.weight  # (d_model, input_dims)
+        b_in = self.input_proj.bias
+        x_cf = x.permute(2, 0, 1).reshape(in_dims, batch * time)  # (input_dims, B*T)
+        proj = w_in @ x_cf if b_in is None else torch.addmm(b_in[:, None], w_in, x_cf)
+        h = proj.reshape(w_in.shape[0], batch, time).to(torch.complex64)  # (F, B, T)
+        with torch.amp.autocast(x.device.type, enabled=False):
+            for block in self.blocks:
+                out = block._forward_fbt(h)
+                # Complex skip: only when shape-preserving (uniform hidden_dims).
+                h = out + h if self.skip_connection and out.shape == h.shape else out
+        return h.permute(1, 2, 0).contiguous()  # back to (batch, time, filters)

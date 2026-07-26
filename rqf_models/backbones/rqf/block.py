@@ -34,6 +34,18 @@ try:
 except ImportError:
     _HAS_FUSED_MULTI_OSC = False
 
+# Fused two-tap prospective scan (optional, requires Triton + CUDA). Folds the
+# drive tap0*u[n] + tap1*u[n-1] into the scan kernel itself (no materialised
+# drive tensor, no separate shift pass). Gated on the chunked backend so that
+# ORGANICS_SCAN_BACKEND=sequential restores the legacy behaviour end to end.
+try:
+    from rqf_models.ops.chunked_scan_kernel import _triton_chunked_scan_prospective
+    from rqf_models.ops.scan import _USE_CHUNKED as _CHUNKED_BACKEND
+
+    _HAS_FUSED_PROSPECTIVE = _CHUNKED_BACKEND
+except ImportError:
+    _HAS_FUSED_PROSPECTIVE = False
+
 
 def _halfwave_rectify_4ch(z: torch.Tensor) -> torch.Tensor:
     """Half-wave rectified 4-channel decomposition.
@@ -273,6 +285,9 @@ class BaseRQFBlock(BackboneBase):
         prospective_tau: float | list[float] | torch.Tensor | None = None,
         scan_grad_mode: str = "full",
         tbptt_delayed_input_mode: str = "strict",
+        param_space: str = "sigmoid",
+        seq_duration: float | None = None,
+        filter_max_freq_factor: float = 1.0,
     ) -> None:
         super().__init__()
 
@@ -373,6 +388,9 @@ class BaseRQFBlock(BackboneBase):
             max_freq=rqf_max_freq,
             min_gamma=rqf_min_gamma,
             max_gamma=rqf_max_gamma,
+            seq_duration=seq_duration,
+            filter_max_freq_factor=filter_max_freq_factor,
+            param_space=param_space,
             discretization=discretization,
             clamp_gamma=clamp_gamma,
         )
@@ -388,6 +406,9 @@ class BaseRQFBlock(BackboneBase):
                 max_freq=rqf_max_freq,
                 min_gamma=rqf_min_gamma,
                 max_gamma=rqf_max_gamma,
+                seq_duration=seq_duration,
+                filter_max_freq_factor=filter_max_freq_factor,
+                param_space=param_space,
                 discretization=discretization,
                 clamp_gamma=clamp_gamma,
             )
@@ -901,6 +922,16 @@ class BaseRQFBlock(BackboneBase):
         """
         C2_ones = torch.ones_like(C1)
         if not self._use_tbptt1_scan_grad():
+            if (
+                _HAS_FUSED_PROSPECTIVE
+                and u.is_cuda
+                and u.is_complex()
+                and tap0.dim() == 1
+                and tap1.dim() == 1
+            ):
+                # Fused two-tap kernel: identical recurrence, but the drive is
+                # formed inside the scan (no drive tensor, no lag-1 shift).
+                return _triton_chunked_scan_prospective(C1, tap0, tap1, u)
             drive = self._apply_prospective_taps(u, tap0, tap1)
             return self._scan(drive, C1, C2_ones)
 
