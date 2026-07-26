@@ -35,9 +35,8 @@ except ImportError:
     _HAS_FUSED_MULTI_OSC = False
 
 # Fused two-tap prospective scan (optional, requires Triton + CUDA). Folds the
-# drive tap0*u[n] + tap1*u[n-1] into the scan itself via a pointwise epilogue
-# on the ordinary scan, so the prospective path avoids materialising a drive
-# tensor or loading the shifted input. Gated on the chunked backend so that
+# drive tap0*u[n] + tap1*u[n-1] into the scan kernel itself (no materialised
+# drive tensor, no separate shift pass). Gated on the chunked backend so that
 # ORGANICS_SCAN_BACKEND=sequential restores the legacy behaviour end to end.
 try:
     from rqf_models.ops.chunked_scan_kernel import _triton_chunked_scan_prospective
