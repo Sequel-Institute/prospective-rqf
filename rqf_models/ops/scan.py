@@ -9,8 +9,8 @@ with C1, C2 and x complex. A real-valued ``u`` is treated as ``u + 0j``:
 coefficients and state stay complex, and on CUDA a specialized Triton fast
 path runs the same equation without materializing the all-zero imaginary
 input channel. This is NOT the deprecated real-input RQF equation with an
-extra imaginary term / modified Im(x) feedback; that variant complicated the
-local-learning derivation and produced non-symmetric filters.
+extra imaginary term / modified Im(x) feedback; that variant complicated
+gradient derivations and produced non-symmetric filters.
 
 Key features:
     1. Blelloch parallel scan: O(T) work, O(log T) depth
