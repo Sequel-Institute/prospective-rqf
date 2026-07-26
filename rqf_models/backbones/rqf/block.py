@@ -285,6 +285,9 @@ class BaseRQFBlock(BackboneBase):
         prospective_tau: float | list[float] | torch.Tensor | None = None,
         scan_grad_mode: str = "full",
         tbptt_delayed_input_mode: str = "strict",
+        param_space: str = "sigmoid",
+        seq_duration: float | None = None,
+        filter_max_freq_factor: float = 1.0,
     ) -> None:
         super().__init__()
 
@@ -385,6 +388,9 @@ class BaseRQFBlock(BackboneBase):
             max_freq=rqf_max_freq,
             min_gamma=rqf_min_gamma,
             max_gamma=rqf_max_gamma,
+            seq_duration=seq_duration,
+            filter_max_freq_factor=filter_max_freq_factor,
+            param_space=param_space,
             discretization=discretization,
             clamp_gamma=clamp_gamma,
         )
@@ -400,6 +406,9 @@ class BaseRQFBlock(BackboneBase):
                 max_freq=rqf_max_freq,
                 min_gamma=rqf_min_gamma,
                 max_gamma=rqf_max_gamma,
+                seq_duration=seq_duration,
+                filter_max_freq_factor=filter_max_freq_factor,
+                param_space=param_space,
                 discretization=discretization,
                 clamp_gamma=clamp_gamma,
             )

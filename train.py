@@ -66,6 +66,54 @@ class SequenceClassifier(nn.Module):
         return self.head(pooled)
 
 
+class ComplexReadoutClassifier(nn.Module):
+    """Per-timestep readout on the raw complex encoder state.
+
+    Stacks the real and imaginary components (``2F`` features), applies a
+    small MLP per timestep, and mean-pools the logits over time. The output
+    layer starts near zero so early logits are pooling-neutral. Mirrors the
+    SequenceClassifier per_step_loss contract.
+    """
+
+    def __init__(
+        self,
+        encoder: nn.Module,
+        encoder_dim: int,
+        num_classes: int,
+        hidden_dims: int | None,
+        dropout: float,
+        per_step_loss: bool,
+    ) -> None:
+        super().__init__()
+        self.encoder = encoder
+        self.per_step_loss = per_step_loss
+        in_dim = 2 * encoder_dim
+        if hidden_dims is None:
+            out = nn.Linear(in_dim, num_classes)
+            nn.init.normal_(out.weight, std=1e-3)
+            nn.init.zeros_(out.bias)
+            self.head = out
+        else:
+            out = nn.Linear(hidden_dims, num_classes)
+            nn.init.normal_(out.weight, std=1e-3)
+            nn.init.zeros_(out.bias)
+            self.head = nn.Sequential(
+                nn.Linear(in_dim, hidden_dims),
+                nn.ReLU(),
+                nn.Dropout(dropout),
+                out,
+            )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        features = self.encoder(x)  # complex (batch, time, F)
+        feats = torch.cat([features.real, features.imag], dim=-1)
+        batch, time, dim = feats.shape
+        logits = self.head(feats.reshape(batch * time, dim)).reshape(batch, time, -1)
+        if self.per_step_loss and self.training:
+            return logits
+        return logits.mean(dim=1)
+
+
 class OrganicsSequenceClassifier(nn.Module):
     def __init__(
         self,
@@ -472,6 +520,22 @@ def build_organics_model(cfg: DictConfig) -> OrganicsSequenceClassifier:
 def build_model(cfg: DictConfig) -> nn.Module:
     if cfg.model.encoder == "discrete_organics":
         return build_organics_model(cfg)
+    if str(get_model_cfg(cfg, "readout", "real")) == "real_imag_mlp":
+        # Paper readout: per-timestep MLP on stacked [Re; Im] of the raw
+        # complex encoder state, mean-pooled logits.
+        encoder, output_dims = build_encoder(cfg)
+        if not getattr(encoder, "complex_output", False):
+            raise ValueError(
+                "readout='real_imag_mlp' requires encoder_kwargs.complex_output=true"
+            )
+        return ComplexReadoutClassifier(
+            encoder=encoder,
+            encoder_dim=int(cfg.model.hidden_width),
+            num_classes=len(cfg.data.classes),
+            hidden_dims=get_model_cfg(cfg, "classifier").hidden_dims,
+            dropout=float(cfg.model.classifier.dropout),
+            per_step_loss=bool(cfg.training.per_step_loss),
+        )
     encoder, output_dims = build_encoder(cfg)
     return SequenceClassifier(
         encoder=encoder,
@@ -636,6 +700,11 @@ def run_epoch(
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.training.gradient_clip_val))
                 optimizer.step()
+                enc = getattr(model, "encoder", None)
+                if enc is not None and hasattr(enc, "clamp_parameters"):
+                    # Log-space filter leaves are unconstrained between steps;
+                    # project them back into their bands (no-op otherwise).
+                    enc.clamp_parameters()
         batch = y.numel()
         loss_sum += float(loss.detach()) * batch
         correct += int((pred == y).sum().item())

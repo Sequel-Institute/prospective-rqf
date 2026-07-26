@@ -23,6 +23,7 @@ import torch.nn as nn
 from rqf_models.backbones.rqf.block import BaseRQFBlock
 from rqf_models.backbones.rqf.encoder import BaseRQFEncoder
 from rqf_models.backbones.rqf.utils.activations import SplitReLU
+from rqf_models.backbones.rqf.utils.init import init_complex_weight_, rqf_forward_std
 from rqf_models.ops import scan as _scan_module
 
 # Channel-outermost fused prospective scan (optional, requires Triton + CUDA).
@@ -66,6 +67,11 @@ class PureRQFBlock(BaseRQFBlock):
         d_out = kwargs.get("d_model_out") or d_model
         super().__init__(d_model=d_model, num_filters=d_out, **kwargs)
 
+        # Whether to apply the split activation on this block's output. The
+        # encoder clears this on the last block when ``final_activation=False``
+        # so the readout consumes the raw complex scan state.
+        self.apply_activation = True
+
         if complex_weights:
             std = 1.0 / math.sqrt(d_model)
             self.W = nn.Parameter(
@@ -101,7 +107,7 @@ class PureRQFBlock(BaseRQFBlock):
 
         c_weights = self.c_weights_fwd if self._has_c_weights else None
         y = self._scan_direction(z, self.rqf_fwd, c_weights, delayed_x=delayed_z, flip=False)
-        return self.act(y)
+        return self.act(y) if self.apply_activation else y
 
     def _fbt_eligible(self) -> bool:
         """Whether this block supports the channel-outermost fused path.
@@ -141,7 +147,7 @@ class PureRQFBlock(BaseRQFBlock):
         C1 = C1.to(torch.cfloat)
         tap0 = tap0.to(torch.cfloat)
         tap1 = tap1.to(torch.cfloat)
-        fuse = isinstance(self.act, SplitReLU)
+        fuse = self.apply_activation and isinstance(self.act, SplitReLU)
         if fuse and d_out * batch >= _FBT_RECOMPUTE_MIN_GRID:
             # Large grid: recompute the raw state in the backward instead of
             # storing it (lower peak memory, same split-relu output).
@@ -149,7 +155,9 @@ class PureRQFBlock(BaseRQFBlock):
         y = fbt_prospective_scan(C1, tap0, tap1, z, fuse_act=fuse)
         # Split activations are pointwise, so they apply unchanged in this
         # layout; split-relu is already folded into the scan when ``fuse``.
-        return y if fuse else self.act(y)
+        if fuse or not self.apply_activation:
+            return y
+        return self.act(y)
 
 
 class PureRQFEncoder(BaseRQFEncoder):
@@ -225,6 +233,13 @@ class PureRQFEncoder(BaseRQFEncoder):
         prospective_tau: float | list[float] | None = None,
         skip_connection: bool | None = None,
         scan_grad_mode: str = "full",
+        param_space: str = "sigmoid",
+        seq_duration: float | None = None,
+        filter_max_freq_factor: float = 1.0,
+        w_init: str | float | None = None,
+        final_activation: bool = True,
+        input_proj_bias: bool = True,
+        complex_output: bool = False,
         **legacy_kwargs: Any,
     ) -> None:
         residual_connection = legacy_kwargs.pop("residual_connection", None)
@@ -264,6 +279,9 @@ class PureRQFEncoder(BaseRQFEncoder):
             "prospective_mode": prospective_mode,
             "prospective_tau": prospective_tau,
             "scan_grad_mode": scan_grad_mode,
+            "param_space": param_space,
+            "seq_duration": seq_duration,
+            "filter_max_freq_factor": filter_max_freq_factor,
         }
         super().__init__(
             input_dims=input_dims,
@@ -274,6 +292,45 @@ class PureRQFEncoder(BaseRQFEncoder):
             filter_scales=filter_scales,
         )
         self.skip_connection = bool(skip_connection)
+        # complex_output: return the raw complex features (batch, time, F) and
+        # skip .real / final_norm / output_proj — for external complex readouts.
+        self.complex_output = bool(complex_output)
+
+        # Power-preserving W init recipe. Layer 0 consumes the raw
+        # standardized input (identity gain); deeper layers consume the
+        # inter-layer split activation.
+        if w_init is not None:
+            for idx, block in enumerate(self.blocks):
+                if isinstance(w_init, int | float):
+                    std = float(w_init)
+                elif w_init == "forward":
+                    in_act = "identity" if idx == 0 else activation
+                    std = rqf_forward_std(block.W.shape[1], in_act)
+                else:
+                    raise ValueError(
+                        f"w_init must be None, 'forward', or a float std; got {w_init!r}"
+                    )
+                init_complex_weight_(block.W, std)
+
+        # Raw complex state into the readout: skip the last block's activation.
+        if not final_activation:
+            self.blocks[-1].apply_activation = False
+
+        # Bias-free input projection (removes the learnable DC drive).
+        if not input_proj_bias:
+            self.input_proj.register_parameter("bias", None)
+
+    @torch.no_grad()
+    def clamp_parameters(self) -> None:
+        """Project all blocks' filter parameters into their valid bands.
+
+        Call after each optimizer step when using ``param_space="log"``
+        (no-op for the sigmoid parametrization).
+        """
+        for block in self.blocks:
+            block.rqf_fwd.clamp_parameters()
+            if getattr(block, "rqf_bwd", None) is not None:
+                block.rqf_bwd.clamp_parameters()
 
     @property
     def residual_connection(self) -> bool:
@@ -304,6 +361,9 @@ class PureRQFEncoder(BaseRQFEncoder):
                     out = block(h)
                     # Complex skip: only when shape-preserving (uniform hidden_dims).
                     h = out + h if self.skip_connection and out.shape == h.shape else out
+
+        if self.complex_output:
+            return h
 
         h = h.real
 

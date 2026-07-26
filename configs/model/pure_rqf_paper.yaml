@@ -1,0 +1,51 @@
+# Pure RQF — current recipe (improved since the original submission).
+#
+# Differences from model=pure_rqf (the submission-era configuration), which
+# together account for the improved results:
+#   - log-space filter parametrization (log_theta / log_gamma leaves,
+#     multiplicative updates; bands enforced by post-step projection)
+#   - single log-uniform frequency band derived from the clip duration
+#     (seq_duration) instead of hand-set octave filter_scales
+#   - power-preserving complex weight init (w_init: forward)
+#   - raw complex state into the readout (final_activation: false) with a
+#     per-timestep MLP on the stacked [Re; Im] components (readout:
+#     real_imag_mlp), mean-pooled logits
+#   - bias-free input projection; split_relu inter-layer activation
+name: pure_rqf_paper
+encoder: pure_rqf
+depth: 6
+hidden_width: 32
+output_dims: 32
+skip_connection: false
+prospective_input: true
+prospective_mode: tau
+prospective_tau: null
+readout: real_imag_mlp
+
+encoder_kwargs:
+  samp_frequency: 16000.0
+  min_freq: 1.0
+  max_freq: 8000.0
+  tau: 0.0003125          # 5 * dt
+  learn_tau: false
+  discretization: zoh
+  activation: split_relu
+  complex_weights: true
+  clamp_gamma: false
+  norm_type: none
+  param_space: log
+  seq_duration: 1.0       # 1 s clips: freq band [1/T, 1/tau], log-uniform init
+  filter_max_freq_factor: 1.0
+  w_init: forward
+  final_activation: false
+  input_proj_bias: false
+  complex_output: true
+
+mfcc_encoder_kwargs:
+  samp_frequency: 160.0
+  tau: 0.03125            # 5 * dt at the MFCC frame rate
+
+classifier:
+  hidden_dims: 256
+  activation: relu
+  dropout: 0.0
