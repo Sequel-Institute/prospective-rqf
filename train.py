@@ -21,6 +21,7 @@ from tqdm.auto import tqdm
 from rqf_models.cells.implementations.organics_cell import ORGaNICsCell
 from rqf_models.cells.state import ORGaNICsState
 from rqf_models.backbones.rqf import PureRQFEncoder, S4RQFEncoder
+from rqf_models.backbones.s5 import S5Encoder
 
 
 class SequenceClassifier(nn.Module):
@@ -430,6 +431,23 @@ def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:
             tbptt_delayed_input_mode=str(
                 getattr(cfg.training, "tbptt_delayed_input_mode", "strict")
             ),
+            **kwargs,
+        )
+    elif cfg.model.encoder == "s5":
+        encoder = S5Encoder(
+            input_dims=input_dims,
+            output_dims=output_dims,
+            d_model=hidden_width,
+            num_layers=depth,
+            skip_connection=skip_connection,
+            prospective_input=bool(cfg.model.prospective_input),
+            prospective_mode=str(get_model_cfg(cfg, "prospective_mode", "direct")),
+            prospective_horizon_multiplier=float(
+                get_model_cfg(cfg, "prospective_horizon_multiplier", 5.0)
+            ),
+            prospective_initial=str(cfg.model.prospective_initial),
+            prospective_feedthrough=bool(cfg.model.prospective_feedthrough),
+            scan_grad_mode=str(cfg.training.scan_grad_mode),
             **kwargs,
         )
     else:
