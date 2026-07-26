@@ -472,34 +472,77 @@ def _chunked_prospective_forward_raw(  # pragma: no cover
 
 
 class _ChunkedProspectiveScanFunction(torch.autograd.Function):  # pragma: no cover
-    """Fused prospective scan x_out[n]=C1 x_out[n-1] + tap0 x[n] + tap1 x[n-1]."""
+    """Fused prospective scan x_out[n]=C1 x_out[n-1] + tap0 x[n] + tap1 x[n-1].
+
+    Uses the single-load reformulation: with the plain scan
+    ``s[n] = C1 s[n-1] + x[n]`` (unit input gain), linearity gives
+
+        x_out[n] = tap0 s[n] + tap1 s[n-1]
+                 = (tap0 + tap1/C1) s[n] - (tap1/C1) x[n]
+
+    (second step via ``s[n-1] = (s[n] - x[n]) / C1``), so the two-tap output
+    is a pointwise epilogue on the ordinary scan: the shifted input tap never
+    has to be loaded, and the backward is the ordinary scan adjoint plus
+    pointwise terms. Requires ``C1 != 0`` (RQF poles are away from zero); a
+    guard falls back to the drive-materialising kernel otherwise.
+    """
 
     @staticmethod
     def forward(ctx, C1, tap0, tap1, x):
-        """Forward via the fused prospective kernel; saves coefficients, input, states."""
+        """Forward via plain scan + pointwise two-tap epilogue."""
         C1 = C1.to(torch.cfloat)
         tap0 = tap0.to(torch.cfloat)
         tap1 = tap1.to(torch.cfloat)
         if not x.is_complex():
             x = x.to(torch.cfloat)
-        output = _chunked_prospective_forward_raw(C1, tap0, tap1, x)
-        ctx.save_for_backward(C1, tap0, tap1, x, output)
+        if bool((C1.abs() < 1e-4).any()):
+            # Degenerate pole: the s[n-1] reconstruction divides by C1.
+            output = _chunked_prospective_forward_raw(C1, tap0, tap1, x)
+            ctx.degenerate = True
+            ctx.save_for_backward(C1, tap0, tap1, x, output)
+            return output
+        ctx.degenerate = False
+        ones = torch.ones_like(C1)
+        s = _chunked_scan_forward_raw(C1, ones, x)
+        ratio = tap1 / C1
+        output = (tap0 + ratio) * s - ratio * x
+        ctx.save_for_backward(C1, tap0, tap1, x, s)
         return output
 
     @staticmethod
     @once_differentiable
     def backward(ctx, grad_output):
-        """Backward: adjoint g wrt the drive (chunked) + pointwise grad_x/tap0/tap1."""
-        C1, tap0, tap1, x, states = ctx.saved_tensors
+        """Backward: ordinary scan adjoint + pointwise tap/pole gradients."""
+        C1, tap0, tap1, x, saved = ctx.saved_tensors
         ones = torch.ones_like(C1)
-        # g = adjoint of the scan wrt its drive input (grad_u with unit input gain)
-        grad_C1, _grad_ones, g = _chunked_scan_backward_raw(C1, ones, x, states, grad_output)
-        zeros = torch.zeros_like(g[:, :1, :])
-        g_ahead = torch.cat([g[:, 1:, :], zeros], dim=1)  # g[t+1]
-        x_delayed = torch.cat([torch.zeros_like(x[:, :1, :]), x[:, :-1, :]], dim=1)  # x[t-1]
-        grad_x = tap0.conj() * g + tap1.conj() * g_ahead
-        grad_tap0 = (x.conj() * g).sum(dim=(0, 1))
-        grad_tap1 = (x_delayed.conj() * g).sum(dim=(0, 1))
+        if ctx.degenerate:
+            states = saved
+            grad_C1, _grad_ones, g = _chunked_scan_backward_raw(
+                C1, ones, x, states, grad_output
+            )
+            zeros = torch.zeros_like(g[:, :1, :])
+            g_ahead = torch.cat([g[:, 1:, :], zeros], dim=1)  # g[t+1]
+            x_delayed = torch.cat([torch.zeros_like(x[:, :1, :]), x[:, :-1, :]], dim=1)
+            grad_x = tap0.conj() * g + tap1.conj() * g_ahead
+            grad_tap0 = (x.conj() * g).sum(dim=(0, 1))
+            grad_tap1 = (x_delayed.conj() * g).sum(dim=(0, 1))
+            return grad_C1, grad_tap0, grad_tap1, grad_x
+
+        s = saved
+        ratio = tap1 / C1
+        A = tap0 + ratio  # output = A*s - ratio*x
+        # Adjoint through the plain scan with upstream gradient conj(A)-scaled.
+        grad_s = A.conj() * grad_output
+        grad_C1_scan, _grad_ones, g = _chunked_scan_backward_raw(C1, ones, x, s, grad_s)
+        grad_x = g - ratio.conj() * grad_output
+        # Pointwise coefficient gradients: output = A*s - B*x with
+        # A = tap0 + tap1/C1, B = tap1/C1.
+        grad_A = (s.conj() * grad_output).sum(dim=(0, 1))
+        grad_B = -(x.conj() * grad_output).sum(dim=(0, 1))
+        inv_c1_conj = (1.0 / C1).conj()
+        grad_tap0 = grad_A
+        grad_tap1 = (grad_A + grad_B) * inv_c1_conj
+        grad_C1 = grad_C1_scan + (grad_A + grad_B) * (-tap1 / (C1 * C1)).conj()
         return grad_C1, grad_tap0, grad_tap1, grad_x
 
 
