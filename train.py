@@ -751,8 +751,14 @@ def main(cfg: DictConfig) -> None:
     test_loader = make_loader(test_data, cfg, "test")
 
     model = build_model(cfg).to(device)
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    def _real_numel(p: torch.Tensor) -> int:
+        # Real-valued degrees of freedom: a complex parameter has two real
+        # components, so it counts twice.
+        return p.numel() * (2 if p.is_complex() else 1)
+
+    total_params = sum(_real_numel(p) for p in model.parameters())
+    trainable_params = sum(_real_numel(p) for p in model.parameters() if p.requires_grad)
     print(f"model={cfg.model.name} data={cfg.data.variant} params={total_params} trainable={trainable_params}")
     if cfg.dry_run:
         return
