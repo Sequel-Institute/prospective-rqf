@@ -144,8 +144,9 @@ class FBTEncoderParityTest(unittest.TestCase):
         torch.testing.assert_close(y_fbt, y_std, rtol=2e-4, atol=2e-4)
 
         grad = torch.randn_like(y_fbt)
-        gp_fbt = torch.autograd.grad(y_fbt, [x_fbt, *enc.parameters()], grad, allow_unused=True)
-        gp_std = torch.autograd.grad(y_std, [x_std, *enc.parameters()], grad, allow_unused=True)
+        params = [p for p in enc.parameters() if p.requires_grad]
+        gp_fbt = torch.autograd.grad(y_fbt, [x_fbt, *params], grad, allow_unused=True)
+        gp_std = torch.autograd.grad(y_std, [x_std, *params], grad, allow_unused=True)
         for a, b in zip(gp_fbt, gp_std, strict=True):
             if a is None and b is None:
                 continue
