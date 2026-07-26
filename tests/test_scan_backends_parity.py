@@ -107,6 +107,61 @@ class FusedProspectiveParityTest(unittest.TestCase):
 
 
 @unittest.skipUnless(CUDA, "requires CUDA + Triton")
+class FBTEncoderParityTest(unittest.TestCase):
+    """The channel-outermost fused encoder path must match the standard path."""
+
+    def _run_encoder_pair(self, activation: str, skip: bool, in_dims: int):
+        import os
+
+        from rqf_models.backbones.rqf.pure import PureRQFEncoder
+
+        torch.manual_seed(0)
+        enc = PureRQFEncoder(
+            input_dims=in_dims,
+            output_dims=16,
+            hidden_dims=16,
+            num_layers=3,
+            samp_frequency=1000.0,
+            min_freq=1.0,
+            max_freq=400.0,
+            tau=0.001,
+            prospective_input=True,
+            activation=activation,
+            skip_connection=skip,
+        ).cuda()
+        x = torch.randn(2, 700, in_dims, device="cuda")
+
+        x_fbt = x.clone().requires_grad_(True)
+        x_std = x.clone().requires_grad_(True)
+
+        os.environ["ORGANICS_RQF_FBT"] = "1"
+        self.assertTrue(enc._fbt_enabled(x_fbt), "FBT path should be eligible")
+        y_fbt = enc(x_fbt)
+        os.environ["ORGANICS_RQF_FBT"] = "0"
+        y_std = enc(x_std)
+        os.environ["ORGANICS_RQF_FBT"] = "1"
+
+        torch.testing.assert_close(y_fbt, y_std, rtol=2e-4, atol=2e-4)
+
+        grad = torch.randn_like(y_fbt)
+        gp_fbt = torch.autograd.grad(y_fbt, [x_fbt, *enc.parameters()], grad, allow_unused=True)
+        gp_std = torch.autograd.grad(y_std, [x_std, *enc.parameters()], grad, allow_unused=True)
+        for a, b in zip(gp_fbt, gp_std, strict=True):
+            if a is None and b is None:
+                continue
+            torch.testing.assert_close(a, b, rtol=5e-3, atol=5e-4)
+
+    def test_split_relu(self):
+        self._run_encoder_pair("split_relu", skip=False, in_dims=1)
+
+    def test_split_tanh_with_skip(self):
+        self._run_encoder_pair("split_tanh", skip=True, in_dims=1)
+
+    def test_multichannel_input(self):
+        self._run_encoder_pair("split_relu", skip=False, in_dims=13)
+
+
+@unittest.skipUnless(CUDA, "requires CUDA + Triton")
 class DispatchRoutingTest(unittest.TestCase):
     """sequential_scan/parallel_scan must produce backend-independent values."""
 

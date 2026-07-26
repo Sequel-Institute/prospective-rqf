@@ -14,6 +14,7 @@ Example::
 """
 
 import math
+import os
 from typing import Any
 
 import torch
@@ -21,6 +22,23 @@ import torch.nn as nn
 
 from rqf_models.backbones.rqf.block import BaseRQFBlock
 from rqf_models.backbones.rqf.encoder import BaseRQFEncoder
+from rqf_models.backbones.rqf.utils.activations import SplitReLU
+from rqf_models.ops import scan as _scan_module
+
+# Channel-outermost fused prospective scan (optional, requires Triton + CUDA).
+# Runs each block's projection as one 2D complex GEMM and the two-tap scan in
+# (filters, batch, time) layout with the drive (and optionally split-relu)
+# fused into the kernel — no per-layer time-axis permutes.
+try:
+    from rqf_models.ops.fbt_scan_kernel import fbt_prospective_scan, fbt_recompute_scan
+
+    _HAS_FBT_PROSPECTIVE = True
+except ImportError:
+    _HAS_FBT_PROSPECTIVE = False
+
+# Grid size (filters * batch) above which the fused split-relu scan recomputes
+# the raw state in the backward instead of storing it (lower peak memory).
+_FBT_RECOMPUTE_MIN_GRID = 256
 
 
 class PureRQFBlock(BaseRQFBlock):
@@ -84,6 +102,54 @@ class PureRQFBlock(BaseRQFBlock):
         c_weights = self.c_weights_fwd if self._has_c_weights else None
         y = self._scan_direction(z, self.rqf_fwd, c_weights, delayed_x=delayed_z, flip=False)
         return self.act(y)
+
+    def _fbt_eligible(self) -> bool:
+        """Whether this block supports the channel-outermost fused path.
+
+        Requires the single-oscillator, unidirectional, prospective two-tap,
+        full-gradient configuration (no C-weight oscillator combination) with a
+        complex weight, which the fused ``(filters, batch, time)`` scan
+        implements.
+        """
+        return (
+            self.prospective_input
+            and not self.bidirectional
+            and not self._has_c_weights
+            and self.scan_filters == self.num_filters
+            and self.scan_grad_mode == "full"
+            and self.W.is_complex()
+        )
+
+    def _forward_fbt(self, h: torch.Tensor) -> torch.Tensor:
+        """Forward in channel-outermost ``(filters, batch, time)`` layout.
+
+        Projection is a single 2D complex GEMM ``W @ H`` on the free view
+        ``(d_model, batch*time)``; the fused scan drives and (for split-relu)
+        activates without permuting the time axis. Equivalent to
+        :meth:`forward` on the transposed input.
+        """
+        d_model, batch, time = h.shape
+        W_c = self.W.to(torch.complex64)
+        d_out = W_c.shape[0]
+        z = torch.matmul(W_c, h.reshape(d_model, batch * time)).reshape(d_out, batch, time)
+
+        C1, tap0, tap1 = self.rqf_fwd.compute_two_tap_coefficients(
+            prospective=self.prospective_input,
+            mode=self.prospective_mode,
+            prospective_tau=self.prospective_tau,
+        )
+        C1 = C1.to(torch.cfloat)
+        tap0 = tap0.to(torch.cfloat)
+        tap1 = tap1.to(torch.cfloat)
+        fuse = isinstance(self.act, SplitReLU)
+        if fuse and d_out * batch >= _FBT_RECOMPUTE_MIN_GRID:
+            # Large grid: recompute the raw state in the backward instead of
+            # storing it (lower peak memory, same split-relu output).
+            return fbt_recompute_scan(C1, tap0, tap1, z)
+        y = fbt_prospective_scan(C1, tap0, tap1, z, fuse_act=fuse)
+        # Split activations are pointwise, so they apply unchanged in this
+        # layout; split-relu is already folded into the scan when ``fuse``.
+        return y if fuse else self.act(y)
 
 
 class PureRQFEncoder(BaseRQFEncoder):
@@ -227,14 +293,17 @@ class PureRQFEncoder(BaseRQFEncoder):
         Returns:
             Real output tensor ``(batch, time, output_dims)``.
         """
-        x = self.input_proj(x)
+        if self._fbt_enabled(x):
+            h = self._forward_fbt_stack(x)
+        else:
+            x = self.input_proj(x)
 
-        h = x.to(torch.complex64)
-        with torch.amp.autocast(x.device.type, enabled=False):
-            for block in self.blocks:
-                out = block(h)
-                # Complex skip: only when shape-preserving (uniform hidden_dims).
-                h = out + h if self.skip_connection and out.shape == h.shape else out
+            h = x.to(torch.complex64)
+            with torch.amp.autocast(x.device.type, enabled=False):
+                for block in self.blocks:
+                    out = block(h)
+                    # Complex skip: only when shape-preserving (uniform hidden_dims).
+                    h = out + h if self.skip_connection and out.shape == h.shape else out
 
         h = h.real
 
@@ -245,3 +314,38 @@ class PureRQFEncoder(BaseRQFEncoder):
                 h = self.final_norm(h)
 
         return self.output_proj(h)
+
+    def _fbt_enabled(self, x: torch.Tensor) -> bool:
+        """Whether the channel-outermost fused path applies to this input."""
+        return (
+            _HAS_FBT_PROSPECTIVE
+            and x.is_cuda
+            and _scan_module._SCAN_BACKEND == "chunked"
+            and os.environ.get("ORGANICS_RQF_FBT", "1") != "0"
+            and all(block._fbt_eligible() for block in self.blocks)
+        )
+
+    def _forward_fbt_stack(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the stack in channel-outermost ``(filters, batch, time)`` layout.
+
+        The input projection is applied channel-first so the ``(d_model,
+        batch, time)`` layout falls straight out of the projection: only the
+        tiny ``input_dims`` axis is permuted, not the large projected tensor,
+        which removes the encoder-entry transpose. Each block then projects
+        with a 2D complex GEMM and runs the fused scan in place (no per-layer
+        time-axis permute); the output is transposed back to ``(batch, time,
+        filters)`` once at exit. Exactly equivalent to the standard path up to
+        linear-op reordering.
+        """
+        batch, time, in_dims = x.shape
+        w_in = self.input_proj.weight  # (d_model, input_dims)
+        b_in = self.input_proj.bias
+        x_cf = x.permute(2, 0, 1).reshape(in_dims, batch * time)  # (input_dims, B*T)
+        proj = w_in @ x_cf if b_in is None else torch.addmm(b_in[:, None], w_in, x_cf)
+        h = proj.reshape(w_in.shape[0], batch, time).to(torch.complex64)  # (F, B, T)
+        with torch.amp.autocast(x.device.type, enabled=False):
+            for block in self.blocks:
+                out = block._forward_fbt(h)
+                # Complex skip: only when shape-preserving (uniform hidden_dims).
+                h = out + h if self.skip_connection and out.shape == h.shape else out
+        return h.permute(1, 2, 0).contiguous()  # back to (batch, time, filters)
