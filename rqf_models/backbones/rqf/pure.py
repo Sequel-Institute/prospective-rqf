@@ -127,7 +127,12 @@ class PureRQFBlock(BaseRQFBlock):
             Complex tensor ``(batch, time, d_model_out)``.
         """
         if self.selector is not None:
-            raw, act = self._forward_selective(x.permute(2, 0, 1), x.permute(2, 0, 1))
+            # Standalone block call: the selector reads this block's own input
+            # (``layer_input`` semantics); the encoder stack supplies the raw
+            # previous-layer source for ``layer_output``.
+            source = x.permute(2, 0, 1)
+            raw, act = self._forward_selective(source, source,
+                                               write_raw=not self.apply_activation)
             return (act if self.apply_activation else raw).permute(1, 2, 0)
         W_c = self.W.to(torch.complex64) if not self.W.is_complex() else self.W
         delayed_z = None

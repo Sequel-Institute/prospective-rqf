@@ -115,9 +115,9 @@ def oracle(model, x):
                 else:
                     span = r._max_gamma - r._min_gamma
                     eps = torch.finfo(gamma.dtype).eps
-                    bias = torch.logit(
-                        ((gamma - r._min_gamma) / span).clamp(eps, 1 - eps)
-                    )
+                    resting = (gamma - r._min_gamma) / span
+                    interior = resting.clamp(eps, 1 - eps)
+                    bias = torch.logit(resting + (interior - resting).detach())
                     gamma = r._min_gamma + span * torch.sigmoid(bias + offset)
             theta = r.log_theta.exp()
             if c.W_delta is not None:
@@ -337,6 +337,29 @@ class SelectiveReferenceTest(unittest.TestCase):
             self.assertTrue(bool(torch.isfinite(s.grad).all()))
             if features == "modulus":
                 self.assertEqual(float(s.grad.abs().sum()), 0.0)
+
+    def test_sigmoid_link_keeps_resting_gamma_gradient_at_band_edges(self):
+        # clamp_parameters projects log_gamma exactly onto the band edges. A
+        # zero gamma head must then still receive the static model's
+        # d gamma / d log_gamma there, not a dead logit clamp.
+        x = torch.randn(2, 9, 3)
+        grads = {}
+        for label, selective in (("static", None), ("sigmoid", {})):
+            net = make_model(selective, num_layers=1)
+            rqf = net.blocks[0].rqf_fwd
+            with torch.no_grad():
+                rqf.log_gamma.fill_(10.0)
+                rqf.log_gamma[0] = -50.0
+            net.clamp_parameters()
+            torch.testing.assert_close(
+                rqf.log_gamma[1:], torch.log(rqf._max_gamma[1:]), rtol=0, atol=0
+            )
+            net(x).abs().square().mean().backward()
+            grads[label] = rqf.log_gamma.grad.clone()
+        self.assertGreater(float(grads["static"][1:].abs().min()), 0.0)
+        torch.testing.assert_close(
+            grads["sigmoid"], grads["static"], rtol=1e-3, atol=1e-6
+        )
 
     def test_signed_gate_current_interval_and_zero_gate_derivative(self):
         block = make_model(

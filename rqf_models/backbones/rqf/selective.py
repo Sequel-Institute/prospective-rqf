@@ -178,8 +178,15 @@ class SelectiveController(nn.Module):
             log_shift = self.config.gamma_link == "log_shift"
             bias = rqf.log_gamma if log_shift else rqf.gamma
             if self.W_gamma is not None and not log_shift:
+                # Straight-through clamp: the logit is evaluated strictly inside
+                # (0, 1), but the gradient follows the unclamped resting gamma.
+                # clamp_parameters projects log_gamma exactly onto the band
+                # edges, where a plain clamp would zero d gamma / d log_gamma
+                # forever; this keeps the static model's derivative there.
                 eps = torch.finfo(dtype).eps
-                bias = torch.logit(((bias - lo) / span).clamp(eps, 1 - eps))
+                resting = (bias - lo) / span
+                interior = resting.clamp(eps, 1 - eps)
+                bias = torch.logit(resting + (interior - resting).detach())
             tau = rqf.tau.to(dtype)
             horizon = (
                 torch.ones_like(tau)

@@ -28,6 +28,8 @@ or `abs(s)`; magnitude features have zero subgradient at the origin.
 
 - Sigmoid gamma: `gamma = min + span * sigmoid(b + W_gamma @ f)`, where `b`
   is the floating-point-interior logit of normalized resting `exp(log_gamma)`.
+  The interior clamp is straight-through, so filters that `clamp_parameters`
+  projects onto a band edge keep the static model's `d gamma / d log_gamma`.
 - Log-shift gamma: `gamma = exp(log_gamma + c * tanh(W_gamma @ f))`. The
   resting ceiling is lowered to `max_gamma * exp(-c)` at construction and after
   updates. This can change initial damping even with a zero head. Effective
