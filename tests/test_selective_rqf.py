@@ -187,7 +187,39 @@ def assert_model_parity(
             )
 
 
+def assert_empty_input_support(case, device):
+    for variant, shape, mode, source in itertools.product(
+        VARIANTS,
+        ((2, 0, 3), (0, 3, 3), (0, 0, 3)),
+        ("full", "tbptt1"),
+        ("layer_input", "layer_output"),
+    ):
+        with case.subTest(variant=variant, shape=shape, mode=mode, source=source):
+            net = make_model(
+                dict(variant, input_source=source),
+                active=True,
+                hidden_dims=[5, 7],
+                skip_connection=True,
+                scan_grad_mode=mode,
+            ).to(device)
+            x = torch.empty(shape, device=device, requires_grad=True)
+            y = net(x)
+            case.assertEqual(y.shape, (*shape[:2], 7))
+            case.assertEqual(y.dtype, torch.complex64)
+            y.abs().square().sum().backward()
+            case.assertIsNotNone(x.grad)
+            torch.testing.assert_close(x.grad, torch.zeros_like(x))
+            for name, param in net.named_parameters():
+                if param.grad is not None:
+                    torch.testing.assert_close(
+                        param.grad, torch.zeros_like(param), rtol=0, atol=0, msg=name
+                    )
+
+
 class SelectiveReferenceTest(unittest.TestCase):
+    def test_empty_inputs(self):
+        assert_empty_input_support(self, "cpu")
+
     def test_float64_recurrence_and_detach_semantics(self):
         for variant, prospective, mode in itertools.product(
             CONTROLLER_CASES, (False, True), ("full", "tbptt1")
@@ -539,6 +571,9 @@ class SelectiveMPSTest(unittest.TestCase):
             "1",
             "MPS parity tests require CPU fallback disabled",
         )
+
+    def test_empty_inputs(self):
+        assert_empty_input_support(self, "mps")
 
     def test_options_and_gradients(self):
         for variant, source, prospective, mode in itertools.product(

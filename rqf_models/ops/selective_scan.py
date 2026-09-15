@@ -69,7 +69,10 @@ def reference_layer_scan(
 ) -> tuple[Tensor | None, Tensor | None]:
     """Independent serial autograd reference on CPU, MPS, or CUDA."""
     f_in, batch, time = x.shape
-    z = (weight @ x.reshape(f_in, batch * time)).reshape(-1, batch, time)
+    z = (weight @ x.reshape(f_in, batch * time)).reshape(weight.shape[0], batch, time)
+    if z.numel() == 0:
+        # Preserve the input/weight gradient path without empty scan operations.
+        return z if write_raw else None, z if activate else None
     lag_z = (
         (weight @ x.detach().reshape(f_in, batch * time)).reshape_as(z)
         if truncated and inputs.options[6]
@@ -86,7 +89,7 @@ def reference_layer_scan(
         if t and inputs.options[6]:
             previous = previous + n[..., t] * lag_z[..., t - 1]
         values.append(previous)
-    raw = torch.stack(values, dim=-1) if values else z * 0
+    raw = torch.stack(values, dim=-1)
     activated = torch.complex(raw.real.relu(), raw.imag.relu()) if activate else None
     return raw if write_raw else None, activated
 
@@ -178,6 +181,7 @@ def selective_layer_scan(
         and x.dtype == torch.complex64
         and weight.dtype == torch.complex64
         and inputs.bias.dtype == torch.float32
+        and x.shape[1] > 0
         and x.shape[-1] > 0
     )
     if eligible:

@@ -14,7 +14,13 @@ from unittest import mock
 import torch
 
 from rqf_models.ops.selective_scan import selective_layer_scan
-from test_selective_rqf import CONTROLLER_CASES, VARIANTS, inputs_for, make_model
+from test_selective_rqf import (
+    CONTROLLER_CASES,
+    VARIANTS,
+    assert_empty_input_support,
+    inputs_for,
+    make_model,
+)
 
 
 INTERPRET = os.environ.get("TRITON_INTERPRET") == "1"
@@ -136,6 +142,9 @@ class SelectiveKernelTest(unittest.TestCase):
             else:
                 self.assertIsNotNone(a)
                 torch.testing.assert_close(a, e, rtol=4e-3, atol=3e-4)
+
+    def test_empty_inputs(self):
+        assert_empty_input_support(self, self.device)
 
     def test_variants_and_gradient_modes(self):
         for variant, prospective, truncated in itertools.product(

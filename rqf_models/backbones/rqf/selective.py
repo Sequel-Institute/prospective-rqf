@@ -208,9 +208,9 @@ class SelectiveController(nn.Module):
                 mode == "gamma" and prospective_tau is None,
             )
             return SelectiveScanInputs(
-                g.reshape(-1, batch, time),
-                d.reshape(-1, batch, time),
-                w.reshape(-1, batch, time),
+                g.reshape(g.shape[0], batch, time),
+                d.reshape(d.shape[0], batch, time),
+                w.reshape(w.shape[0], batch, time),
                 bias.to(dtype),
                 rqf.theta.to(dtype),
                 self.warp_groups,
