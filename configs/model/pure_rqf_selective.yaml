@@ -1,0 +1,15 @@
+defaults:
+  - pure_rqf_paper
+  - _self_
+
+name: pure_rqf_selective
+selective:
+  gamma_control: true
+  gamma_link: sigmoid
+  gamma_features: real_imag
+  gamma_max_log_scale: 0.22314355131420976
+  write_control: false
+  frequency_warp: none
+  num_groups: 4
+  max_log_scale: 0.22314355131420976
+  input_source: layer_output

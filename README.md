@@ -84,6 +84,24 @@ python train.py data=speech_commands_mfcc data.use_synthetic=true training.max_e
 
 ## Main Training Grids
 
+### Input-dependent Pure RQF
+
+`model=pure_rqf_selective` extends the paper recipe with input-dependent damping,
+an optional signed write gate, and optional global/grouped frequency warps. It
+supports full BPTT and spatial-only TBPTT(1), with split ReLU, ZOH, log-space
+parameters, and fixed tau. The default enables damping selection only.
+
+```bash
+python train.py model=pure_rqf_selective data=speech_commands_mfcc device=mps \
+  model.selective.write_control=true model.selective.frequency_warp=grouped
+python train.py model=pure_rqf_selective training=tbptt_local_loss device=cuda
+```
+
+CPU and MPS run the PyTorch reference; CUDA uses fused Triton kernels when
+available. Set `ORGANICS_RQF_FBT=0` to force the reference. See
+[selective RQF behavior and validation](docs/selective_rqf.md) for all options,
+gradient conventions, and CPU/MPS/CUDA test commands.
+
 Pure RQF, raw waveform, full BPTT:
 
 ```bash

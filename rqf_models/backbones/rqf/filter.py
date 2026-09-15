@@ -225,6 +225,7 @@ class RQF(nn.Module):
         self.use_b_matrix = use_b_matrix
         self.input_features = input_features
         self.clamp_gamma = clamp_gamma
+        self.gamma_log_headroom = 0.0
 
         # Default tau to dt * 10 if not specified
         if tau is None:
@@ -381,7 +382,8 @@ class RQF(nn.Module):
             min=torch.log(2 * np.pi * self._min_freq * tau),
             max=torch.log(2 * np.pi * self._max_freq * tau),
         )
-        self.log_gamma.clamp_(min=torch.log(self._min_gamma), max=torch.log(self._max_gamma))
+        self.log_gamma.clamp_(min=torch.log(self._min_gamma),
+                             max=torch.log(self._max_gamma) - self.gamma_log_headroom)
         if self.clamp_gamma:
             omega_tau = self.log_theta.exp()
             gamma_min = 1 - 1 / torch.sqrt(1 + omega_tau**2)

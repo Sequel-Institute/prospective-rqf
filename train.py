@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import hydra
+from hydra.core.hydra_config import HydraConfig
 import numpy as np
 import torch
 import torch.nn as nn
@@ -435,6 +436,8 @@ def variant_filter_scales(cfg: DictConfig) -> list[dict[str, Any]] | None:
 
 
 def validate_cfg(cfg: DictConfig) -> None:
+    if get_model_cfg(cfg, "selective") is not None and cfg.model.encoder != "pure_rqf":
+        raise ValueError("model.selective is supported only by Pure RQF")
     if cfg.training.per_step_loss and cfg.training.scan_grad_mode != "tbptt1":
         raise ValueError(
             "per_step_loss=true is used for the spatial-only backpropagation / "
@@ -462,6 +465,8 @@ def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:
             prospective_mode=str(cfg.model.prospective_mode),
             prospective_tau=get_model_cfg(cfg, "prospective_tau"),
             scan_grad_mode=str(cfg.training.scan_grad_mode),
+            selective=(as_container(cfg.model.selective)
+                       if get_model_cfg(cfg, "selective") is not None else None),
             **kwargs,
         )
     elif cfg.model.encoder == "rqf_s4":
@@ -568,7 +573,8 @@ def build_model(cfg: DictConfig) -> nn.Module:
 
 
 def build_optimizer(cfg: DictConfig, model: nn.Module) -> torch.optim.Optimizer:
-    rqf_patterns = ("freq_param", "gamma_param", "log_tau", "rqf_fwd.", "rqf_bwd.")
+    rqf_patterns = ("freq_param", "gamma_param", "log_tau", "rqf_fwd.", "rqf_bwd.",
+                    "selector.W_gamma", "selector.W_delta")
     base_params = []
     rqf_params = []
     for name, param in model.named_parameters():
@@ -686,6 +692,22 @@ def make_loader(dataset: Dataset, cfg: DictConfig, split: str) -> DataLoader:
     )
 
 
+@torch.no_grad()
+def clip_model_grad_norm_(model: nn.Module, max_norm: float) -> torch.Tensor:
+    """L2 clipping with real views for MPS's unsupported complex norm operation."""
+    params = list(model.parameters())
+    grads = [p.grad for p in params if p.grad is not None]
+    if not any(g.device.type == "mps" and g.is_complex() for g in grads):
+        return torch.nn.utils.clip_grad_norm_(params, max_norm)
+    norms = [torch.linalg.vector_norm(torch.view_as_real(g.resolve_conj()) if g.is_complex() else g)
+             for g in grads]
+    total = torch.linalg.vector_norm(torch.stack(norms))
+    scale = (max_norm / (total + 1e-6)).clamp(max=1.0)
+    for grad in grads:
+        grad.mul_(scale)
+    return total
+
+
 def run_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -716,7 +738,7 @@ def run_epoch(
             if train:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), float(cfg.training.gradient_clip_val))
+                clip_model_grad_norm_(model, float(cfg.training.gradient_clip_val))
                 optimizer.step()
                 enc = getattr(model, "encoder", None)
                 if enc is not None and hasattr(enc, "clamp_parameters"):
@@ -772,6 +794,10 @@ def main(cfg: DictConfig) -> None:
 
     ckpt_dir = out_dir / cfg.checkpoint_dir
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_config = {
+        "cfg": as_container(cfg),
+        "hydra_overrides": list(HydraConfig.get().overrides.task),
+    }
     best_val_acc = -1.0
     best_epoch = -1
     best_state = None
@@ -787,13 +813,13 @@ def main(cfg: DictConfig) -> None:
             f"epoch={epoch:03d} train_acc={train_metrics['acc']:.4f} "
             f"val_acc={val_metrics['acc']:.4f} val_loss={val_metrics['loss']:.4f}"
         )
-        torch.save({"model": model.state_dict(), "cfg": as_container(cfg), "epoch": epoch}, ckpt_dir / "last.pt")
+        torch.save({"model": model.state_dict(), **checkpoint_config, "epoch": epoch}, ckpt_dir / "last.pt")
         if val_metrics["acc"] > best_val_acc:
             best_val_acc = val_metrics["acc"]
             best_epoch = epoch
             best_state = copy.deepcopy(model.state_dict())
             torch.save(
-                {"model": best_state, "cfg": as_container(cfg), "epoch": epoch, "val_acc": best_val_acc},
+                {"model": best_state, **checkpoint_config, "epoch": epoch, "val_acc": best_val_acc},
                 ckpt_dir / "best_val_acc.pt",
             )
             stale = 0
