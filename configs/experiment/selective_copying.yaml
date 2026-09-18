@@ -1,6 +1,7 @@
 # @package _global_
 # local-learning: 4x64_p_write_split_relu, config hash 899afaa5a82768b9.
 # Validation-selected epoch 308: val 1.0, test 0.99981689453125.
+# Port uses a reduced 100-epoch budget; the source run used 400 epochs.
 defaults:
   - override /data: selective_copying
   - override /model: pure_rqf_selective
@@ -37,7 +38,7 @@ model:
 
 training:
   batch_size: 64
-  max_epochs: 400
+  max_epochs: 100
   patience: 0
   learning_rate: 0.001
   rqf_lr_factor: 1.0

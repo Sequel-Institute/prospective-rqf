@@ -35,8 +35,10 @@ local-learning results, not a fresh full-budget result from this repository.
 | Optimizer | Adam, all learning rates 0.001, epsilon 0.0001, gradient clipping 1 |
 | Regularization | No weight decay, scheduler, label smoothing, or dropout |
 | Task | Total length 4096, 16 recall tokens, vocabulary 16 |
-| Budget | Batch 64, 64,000 fresh examples/epoch, 400 epochs = 400,000 updates |
+| Budget | Batch 64, 64,000 fresh examples/epoch, 100 epochs = 100,000 updates |
 | Evaluation | Fixed validation/test sets, 1024 sequences each; validation selects the checkpoint |
+
+The port uses a reduced 100-epoch budget; the historical source run used 400 epochs.
 
 The first complex RQF weight maps the 16 one-hot inputs directly to 64 filters.
 The optional `input_projection=false` and `output_projection=false` settings
