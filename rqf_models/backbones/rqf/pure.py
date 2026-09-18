@@ -233,6 +233,9 @@ class PureRQFEncoder(BaseRQFEncoder):
         complex_weights: Use complex weight matrices in blocks.
         skip_connection: Add a complex skip connection between pure RQF
             layers when their shapes match.
+        input_projection: If false, the first RQF directly consumes raw inputs.
+        output_projection: May be disabled with ``complex_output=True`` to
+            omit the unused real output projection.
 
     Example:
         >>> encoder = PureRQFEncoder(
@@ -279,6 +282,8 @@ class PureRQFEncoder(BaseRQFEncoder):
         input_proj_bias: bool = True,
         complex_output: bool = False,
         selective: SelectiveRQFConfig | dict | None = None,
+        input_projection: bool = True,
+        output_projection: bool = True,
         **legacy_kwargs: Any,
     ) -> None:
         residual_connection = legacy_kwargs.pop("residual_connection", None)
@@ -295,6 +300,8 @@ class PureRQFEncoder(BaseRQFEncoder):
             )
 
         self.selective = SelectiveRQFConfig.resolve(selective)
+        if not output_projection and not complex_output:
+            raise ValueError("output_projection=False requires complex_output=True")
         self._block_kwargs = {
             "selective": self.selective,
             "samp_frequency": samp_frequency,
@@ -331,8 +338,15 @@ class PureRQFEncoder(BaseRQFEncoder):
             num_layers=num_layers,
             norm_type=norm_type,
             filter_scales=filter_scales,
+            input_projection=input_projection,
+            output_projection=output_projection,
         )
         self.skip_connection = bool(skip_connection)
+        if not input_projection:
+            # Pure RQF uses shape-matched identity skips only. The base block's
+            # width-changing residual projections are unused in this stack.
+            for block in self.blocks:
+                block.residual_proj = None
         # complex_output: return the raw complex features (batch, time, F) and
         # skip .real / final_norm / output_proj — for external complex readouts.
         self.complex_output = bool(complex_output)
@@ -358,7 +372,7 @@ class PureRQFEncoder(BaseRQFEncoder):
             self.blocks[-1].apply_activation = False
 
         # Bias-free input projection (removes the learnable DC drive).
-        if not input_proj_bias:
+        if not input_proj_bias and input_projection:
             self.input_proj.register_parameter("bias", None)
 
     @torch.no_grad()
@@ -458,11 +472,14 @@ class PureRQFEncoder(BaseRQFEncoder):
         linear-op reordering.
         """
         batch, time, in_dims = x.shape
-        w_in = self.input_proj.weight  # (d_model, input_dims)
-        b_in = self.input_proj.bias
         x_cf = x.permute(2, 0, 1).reshape(in_dims, batch * time)  # (input_dims, B*T)
-        proj = w_in @ x_cf if b_in is None else torch.addmm(b_in[:, None], w_in, x_cf)
-        h = proj.reshape(w_in.shape[0], batch, time).to(torch.complex64)  # (F, B, T)
+        if self.input_projection:
+            w_in = self.input_proj.weight  # (d_model, input_dims)
+            b_in = self.input_proj.bias
+            proj = w_in @ x_cf if b_in is None else torch.addmm(b_in[:, None], w_in, x_cf)
+        else:
+            proj = x_cf
+        h = proj.reshape(-1, batch, time).to(torch.complex64)  # (F, B, T)
         with torch.amp.autocast(x.device.type, enabled=False):
             for block in self.blocks:
                 out = block._forward_fbt(h)

@@ -1,0 +1,49 @@
+# @package _global_
+# local-learning: 4x64_p_write_split_relu, config hash 899afaa5a82768b9.
+# Validation-selected epoch 308: val 1.0, test 0.99981689453125.
+defaults:
+  - override /data: selective_copying
+  - override /model: pure_rqf_selective
+  - override /training: full_bptt
+
+seed: 0
+model:
+  depth: 4
+  hidden_width: 64
+  output_dims: 64
+  skip_connection: false
+  prospective_input: true
+  prospective_mode: tau
+  encoder_kwargs:
+    samp_frequency: 1.0
+    tau: 5.0
+    min_freq: 0.000244140625
+    max_freq: 0.2
+    seq_duration: 4096.0
+    input_projection: false
+    output_projection: false
+  selective:
+    gamma_control: true
+    gamma_link: sigmoid
+    gamma_features: real_imag
+    write_control: true
+    frequency_warp: grouped
+    num_groups: 4
+    max_log_scale: 1.3862943611198906  # ln(4): frequency multipliers in [1/4, 4]
+    input_source: layer_output
+  classifier:
+    hidden_dims: 256
+    dropout: 0.0
+
+training:
+  batch_size: 64
+  max_epochs: 400
+  patience: 0
+  learning_rate: 0.001
+  rqf_lr_factor: 1.0
+  optimizer: adam
+  adam_eps: 0.0001
+  weight_decay: 0.0
+  scheduler: none
+  label_smoothing: 0.0
+  gradient_clip_val: 1.0

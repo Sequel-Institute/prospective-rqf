@@ -31,26 +31,31 @@ def _controller(
     B,
     T,
     mask,
-    OPT: tl.constexpr,
+    HAS_GAMMA: tl.constexpr,
+    HAS_WARP: tl.constexpr,
+    HAS_WRITE: tl.constexpr,
+    LOG_SHIFT: tl.constexpr,
+    GAMMA_SCALE: tl.constexpr,
+    WARP_SCALE: tl.constexpr,
 ):
     gamma = tl.load(Bias + f) + tl.full(t.shape, 0.0, tl.float32)
     sig = tl.full(t.shape, 0.0, tl.float32)
-    if OPT[0]:
+    if HAS_GAMMA:
         v = tl.load(G + (f * B + b) * T + t, mask, 0.0)
-        if OPT[3]:
+        if LOG_SHIFT:
             sig = libdevice.tanh(v)
-            gamma = tl.exp(gamma + OPT[4] * sig)
+            gamma = tl.exp(gamma + GAMMA_SCALE * sig)
         else:
             sig = tl.sigmoid(gamma + v)
             gamma = tl.load(Lo + f) + tl.load(Span + f) * sig
     theta = tl.load(Theta + f) + tl.full(t.shape, 0.0, tl.float32)
     warp = tl.full(t.shape, 0.0, tl.float32)
-    if OPT[1]:
+    if HAS_WARP:
         group = tl.load(Groups + f)
         warp = libdevice.tanh(tl.load(D + (group * B + b) * T + t, mask, 0.0))
-        theta *= tl.exp(OPT[5] * warp)
+        theta *= tl.exp(WARP_SCALE * warp)
     gate = tl.full(t.shape, 1.0, tl.float32)
-    if OPT[2]:
+    if HAS_WRITE:
         gate += tl.load(W + (f * B + b) * T + t, mask, 0.0)
     return gamma, theta, gate, sig, warp, tl.load(Step + f), tl.load(Horizon + f)
 
@@ -73,12 +78,12 @@ def _zoh(g, th, h):
 
 
 @triton.jit
-def _coefficients(g, th, h, horizon, OPT: tl.constexpr):
+def _coefficients(g, th, h, horizon, PROSPECTIVE: tl.constexpr, GAMMA_HORIZON: tl.constexpr):
     Ar, Ai, fr, fi = _zoh(g, th, h)
     pr, pi = g * h * fr, g * h * fi
     nr, ni = tl.full(g.shape, 0.0, tl.float32), tl.full(g.shape, 0.0, tl.float32)
-    if OPT[6]:
-        ratio = 1.0 / g if OPT[7] else horizon
+    if PROSPECTIVE:
+        ratio = 1.0 / g if GAMMA_HORIZON else horizon
         lr, li = ratio * g * Ar, ratio * g * Ai
         pr, pi, nr, ni = pr + lr, pi + li, -lr, -li
     return Ar, Ai, pr, pi, nr, ni
@@ -86,15 +91,16 @@ def _coefficients(g, th, h, horizon, OPT: tl.constexpr):
 
 @triton.jit
 def _coefficient_vjp(
-    g, th, h, horizon, dAr, dAi, dpr, dpi, dnr, dni, OPT: tl.constexpr
+    g, th, h, horizon, dAr, dAi, dpr, dpi, dnr, dni,
+    PROSPECTIVE: tl.constexpr, GAMMA_HORIZON: tl.constexpr,
 ):
     Ar, Ai, fr, fi = _zoh(g, th, h)
     dg = tl.full(g.shape, 0.0, tl.float32)
-    if OPT[6]:
-        ratio = 1.0 / g if OPT[7] else horizon
+    if PROSPECTIVE:
+        ratio = 1.0 / g if GAMMA_HORIZON else horizon
         qr, qi = dpr - dnr, dpi - dni
         # In gamma mode ratio*gamma == 1, including its total derivative.
-        if not OPT[7]:
+        if not GAMMA_HORIZON:
             dg = ratio * (qr * Ar + qi * Ai)
         dAr += ratio * g * qr
         dAi += ratio * g * qi
@@ -154,7 +160,14 @@ def _forward(
     T,
     NC,
     C: tl.constexpr,
-    OPT: tl.constexpr,
+    HAS_GAMMA: tl.constexpr,
+    HAS_WARP: tl.constexpr,
+    HAS_WRITE: tl.constexpr,
+    LOG_SHIFT: tl.constexpr,
+    GAMMA_SCALE: tl.constexpr,
+    WARP_SCALE: tl.constexpr,
+    PROSPECTIVE: tl.constexpr,
+    GAMMA_HORIZON: tl.constexpr,
     ACTIVATE: tl.constexpr,
     WRITE_RAW: tl.constexpr,
 ):
@@ -184,13 +197,13 @@ def _forward(
             B,
             T,
             mask,
-            OPT,
+            HAS_GAMMA, HAS_WARP, HAS_WRITE, LOG_SHIFT, GAMMA_SCALE, WARP_SCALE,
         )
-        ar, ai, pr, pi, nr, ni = _coefficients(g, th, h, horizon, OPT)
+        ar, ai, pr, pi, nr, ni = _coefficients(g, th, h, horizon, PROSPECTIVE, GAMMA_HORIZON)
         pr, pi, nr, ni = gate * pr, gate * pi, gate * nr, gate * ni
         zr, zi = tl.load(Z + off, mask, 0.0), tl.load(Z + off + 1, mask, 0.0)
         ur, ui = _complex_mul(pr, pi, zr, zi)
-        if OPT[6]:
+        if PROSPECTIVE:
             zpr = tl.load(Z + off - 2, mask & (t > 0), 0.0)
             zpi = tl.load(Z + off - 1, mask & (t > 0), 0.0)
             lr, li = _complex_mul(nr, ni, zpr, zpi)
@@ -240,7 +253,14 @@ def _backward(
     F,
     NC,
     C: tl.constexpr,
-    OPT: tl.constexpr,
+    HAS_GAMMA: tl.constexpr,
+    HAS_WARP: tl.constexpr,
+    HAS_WRITE: tl.constexpr,
+    LOG_SHIFT: tl.constexpr,
+    GAMMA_SCALE: tl.constexpr,
+    WARP_SCALE: tl.constexpr,
+    PROSPECTIVE: tl.constexpr,
+    GAMMA_HORIZON: tl.constexpr,
     ACTIVATE: tl.constexpr,
     HAS_GY: tl.constexpr,
     HAS_GX: tl.constexpr,
@@ -273,13 +293,13 @@ def _backward(
             B,
             T,
             mask,
-            OPT,
+            HAS_GAMMA, HAS_WARP, HAS_WRITE, LOG_SHIFT, GAMMA_SCALE, WARP_SCALE,
         )
-        ar, ai, bpr, bpi, bnr, bni = _coefficients(g, th, h, horizon, OPT)
+        ar, ai, bpr, bpi, bnr, bni = _coefficients(g, th, h, horizon, PROSPECTIVE, GAMMA_HORIZON)
         pr, pi, nr, ni = gate * bpr, gate * bpi, gate * bnr, gate * bni
         zr, zi = tl.load(Z + off, mask, 0.0), tl.load(Z + off + 1, mask, 0.0)
         zpr, zpi = tl.full((C,), 0.0, tl.float32), tl.full((C,), 0.0, tl.float32)
-        if OPT[6]:
+        if PROSPECTIVE:
             zpr = tl.load(Z + off - 2, mask & (t > 0), 0.0)
             zpi = tl.load(Z + off - 1, mask & (t > 0), 0.0)
         ur, ui = (
@@ -330,9 +350,9 @@ def _backward(
             B,
             T,
             next_t < T,
-            OPT,
+            HAS_GAMMA, HAS_WARP, HAS_WRITE, LOG_SHIFT, GAMMA_SCALE, WARP_SCALE,
         )
-        anr, ani, _, _, nnr, nni = _coefficients(gn, thn, hn, rn, OPT)
+        anr, ani, _, _, nnr, nni = _coefficients(gn, thn, hn, rn, PROSPECTIVE, GAMMA_HORIZON)
         nx = tl.minimum(ix + 1, C - 1)
         a1r = tl.where(ix == C - 1, anr, tl.gather(ar, nx, axis=0))
         a1i = tl.where(ix == C - 1, ani, tl.gather(ai, nx, axis=0))
@@ -357,7 +377,7 @@ def _backward(
         dc_i = tl.sum(tl.where(ix == 0, di, 0.0), axis=0)
         dzr, dzi = pr * dr + pi * di, pr * di - pi * dr
         dwr, dwi = dzr, dzi
-        if OPT[6]:
+        if PROSPECTIVE:
             dwr += n1r * dnextr + n1i * dnexti
             dwi += n1r * dnexti - n1i * dnextr
         if TRUNCATED:
@@ -367,7 +387,7 @@ def _backward(
         tl.store(DZW + off + 1, dwi, mask)
         dpr, dpi = zr * dr + zi * di, zr * di - zi * dr
         dnr, dni = zpr * dr + zpi * di, zpr * di - zpi * dr
-        if OPT[2]:
+        if HAS_WRITE:
             tl.store(DW + base, bpr * dpr + bpi * dpi + bnr * dnr + bni * dni, mask)
         dg, dth = _coefficient_vjp(
             g,
@@ -380,18 +400,18 @@ def _backward(
             gate * dpi,
             gate * dnr,
             gate * dni,
-            OPT,
+            PROSPECTIVE, GAMMA_HORIZON,
         )
-        if OPT[0]:
-            if OPT[3]:
+        if HAS_GAMMA:
+            if LOG_SHIFT:
                 dg *= g
-                tl.store(DG + base, dg * OPT[4] * (1.0 - sig * sig), mask)
+                tl.store(DG + base, dg * GAMMA_SCALE * (1.0 - sig * sig), mask)
             else:
                 dg *= tl.load(Span + f) * sig * (1.0 - sig)
                 tl.store(DG + base, dg, mask)
-        if OPT[1]:
-            tl.store(DD + base, dth * th * OPT[5] * (1.0 - warp * warp), mask)
-            dth *= tl.exp(OPT[5] * warp)
+        if HAS_WARP:
+            tl.store(DD + base, dth * th * WARP_SCALE * (1.0 - warp * warp), mask)
+            dth *= tl.exp(WARP_SCALE * warp)
         bias_sum += tl.sum(tl.where(mask, dg, 0.0), axis=0)
         theta_sum += tl.sum(tl.where(mask, dth, 0.0), axis=0)
     tl.store(Partial + row, bias_sum)
@@ -440,7 +460,9 @@ def selective_forward(z, inputs, activate, write_raw, chunk):
         t,
         nc,
         chunk,
-        inputs.options,
+        # Triton 3.3 cannot subscript a constexpr tuple in a JIT helper.
+        # Pass the controller options as individual compile-time scalars.
+        *inputs.options,
         activate,
         write_raw,
         num_warps=4,
@@ -478,7 +500,7 @@ def selective_backward(z, inputs, entries, gy, gx, activate, truncated, chunk):
         f,
         entries.shape[1],
         chunk,
-        opt,
+        *opt,
         activate,
         gy is not None,
         gx is not None,

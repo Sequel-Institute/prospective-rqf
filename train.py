@@ -23,6 +23,7 @@ from rqf_models.cells.implementations.organics_cell import ORGaNICsCell
 from rqf_models.cells.state import ORGaNICsState
 from rqf_models.backbones.rqf import PureRQFEncoder, S4RQFEncoder
 from rqf_models.backbones.s5 import S5Encoder
+from rqf_models.data.selective_copying import SelectiveCopyingDataSpec
 
 
 class SequenceClassifier(nn.Module):
@@ -74,7 +75,8 @@ class ComplexReadoutClassifier(nn.Module):
     Stacks the real and imaginary components (``2F`` features), applies a
     small MLP per timestep, and mean-pools the logits over time. The output
     layer starts near zero so early logits are pooling-neutral. Mirrors the
-    SequenceClassifier per_step_loss contract.
+    SequenceClassifier per_step_loss contract. With ``recall_steps``, read only
+    the final recall states and retain token logits during training and eval.
     """
 
     def __init__(
@@ -85,10 +87,12 @@ class ComplexReadoutClassifier(nn.Module):
         hidden_dims: int | None,
         dropout: float,
         per_step_loss: bool,
+        recall_steps: int | None = None,
     ) -> None:
         super().__init__()
         self.encoder = encoder
         self.per_step_loss = per_step_loss
+        self.recall_steps = recall_steps
         in_dim = 2 * encoder_dim
         if hidden_dims is None:
             out = nn.Linear(in_dim, num_classes)
@@ -105,13 +109,19 @@ class ComplexReadoutClassifier(nn.Module):
                 nn.Dropout(dropout),
                 out,
             )
+            if recall_steps is not None:
+                # Match local-learning's He-normal hidden readout initialization.
+                nn.init.normal_(self.head[0].weight, std=(2.0 / in_dim) ** 0.5)
+                nn.init.zeros_(self.head[0].bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         features = self.encoder(x)  # complex (batch, time, F)
+        if self.recall_steps is not None:
+            features = features[:, -self.recall_steps:]
         feats = torch.cat([features.real, features.imag], dim=-1)
         batch, time, dim = feats.shape
         logits = self.head(feats.reshape(batch * time, dim)).reshape(batch, time, -1)
-        if self.per_step_loss and self.training:
+        if self.recall_steps is not None or (self.per_step_loss and self.training):
             return logits
         return logits.mean(dim=1)
 
@@ -443,6 +453,18 @@ def validate_cfg(cfg: DictConfig) -> None:
             "per_step_loss=true is used for the spatial-only backpropagation / "
             "TBPTT(1) condition and requires training.scan_grad_mode=tbptt1"
         )
+    if cfg.data.name == "selective_copying":
+        if (cfg.model.encoder != "pure_rqf"
+                or get_model_cfg(cfg, "readout") != "real_imag_mlp"
+                or cfg.training.scan_grad_mode != "full"
+                or cfg.training.per_step_loss):
+            raise ValueError("selective copying requires Pure RQF, real_imag_mlp, and full BPTT")
+        if len(cfg.data.classes) != int(cfg.data.feature_dim):
+            raise ValueError("selective copying classes must match the input vocabulary")
+    if cfg.training.get("optimizer", "adamw") not in {"adam", "adamw"}:
+        raise ValueError("training.optimizer must be adam or adamw")
+    if cfg.training.get("scheduler", "cosine") not in {"none", "cosine"}:
+        raise ValueError("training.scheduler must be none or cosine")
 
 
 def build_encoder(cfg: DictConfig) -> tuple[nn.Module, int]:
@@ -558,6 +580,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             hidden_dims=get_model_cfg(cfg, "classifier").hidden_dims,
             dropout=float(cfg.model.classifier.dropout),
             per_step_loss=bool(cfg.training.per_step_loss),
+            recall_steps=(int(cfg.data.n_memorize) if cfg.data.name == "selective_copying" else None),
         )
     encoder, output_dims = build_encoder(cfg)
     return SequenceClassifier(
@@ -599,7 +622,10 @@ def build_optimizer(cfg: DictConfig, model: nn.Module) -> torch.optim.Optimizer:
                 "weight_decay": 0.0,
             }
         )
-    return torch.optim.AdamW(groups)
+    optimizer_class = {"adam": torch.optim.Adam, "adamw": torch.optim.AdamW}[
+        str(cfg.training.get("optimizer", "adamw"))
+    ]
+    return optimizer_class(groups, eps=float(cfg.training.get("adam_eps", 1e-8)))
 
 
 def per_step_cross_entropy(
@@ -637,6 +663,16 @@ def compute_stats(dataset: Dataset, max_samples: int | None) -> tuple[torch.Tens
 
 
 def build_datasets(cfg: DictConfig) -> tuple[Dataset, Dataset, Dataset]:
+    if cfg.data.name == "selective_copying":
+        return SelectiveCopyingDataSpec(
+            seq_len=int(cfg.data.sequence_length),
+            n_memorize=int(cfg.data.n_memorize),
+            n_tokens=int(cfg.data.feature_dim),
+            n_train=int(cfg.data.n_train),
+            n_val=int(cfg.data.n_val),
+            n_test=int(cfg.data.n_test),
+            seed=int(cfg.data.split_seed),
+        ).build()
     if cfg.data.use_synthetic:
         return (
             SyntheticSpeechCommands(
@@ -725,7 +761,16 @@ def run_epoch(
         y = y.to(device)
         with torch.set_grad_enabled(train):
             logits = model(x)
-            if train and cfg.training.per_step_loss:
+            if cfg.data.name == "selective_copying":
+                # The encoder sees the complete sequence; the MLP and objective
+                # use only its recall suffix, identically at train and eval time.
+                y = y[:, -int(cfg.data.n_memorize):]
+                loss = torch.nn.functional.cross_entropy(
+                    logits.reshape(-1, logits.shape[-1]), y.reshape(-1),
+                    label_smoothing=float(cfg.training.label_smoothing) if train else 0.0,
+                )
+                pred = logits.argmax(dim=-1)
+            elif train and cfg.training.per_step_loss:
                 loss = per_step_cross_entropy(logits, y, float(cfg.training.label_smoothing))
                 pred = logits.mean(dim=1).argmax(dim=-1)
             else:
@@ -735,6 +780,8 @@ def run_epoch(
                     label_smoothing=float(cfg.training.label_smoothing) if train else 0.0,
                 )
                 pred = logits.argmax(dim=-1)
+            if not bool(torch.isfinite(loss)):
+                raise FloatingPointError("non-finite loss")
             if train:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -786,11 +833,13 @@ def main(cfg: DictConfig) -> None:
         return
 
     optimizer = build_optimizer(cfg, model)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=int(cfg.training.max_epochs),
-        eta_min=float(cfg.training.min_lr),
-    )
+    scheduler = None
+    if cfg.training.get("scheduler", "cosine") == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=int(cfg.training.max_epochs),
+            eta_min=float(cfg.training.min_lr),
+        )
 
     ckpt_dir = out_dir / cfg.checkpoint_dir
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -803,23 +852,30 @@ def main(cfg: DictConfig) -> None:
     best_state = None
     stale = 0
     history = []
+    global_step = 0
     for epoch in range(int(cfg.training.max_epochs)):
+        if hasattr(train_data, "set_epoch"):
+            train_data.set_epoch(epoch)
         train_metrics = run_epoch(model, train_loader, device, optimizer, cfg)
         val_metrics = run_epoch(model, val_loader, device, None, cfg)
-        scheduler.step()
-        row = {"epoch": epoch, "train": train_metrics, "val": val_metrics}
+        global_step += len(train_loader)
+        if scheduler is not None:
+            scheduler.step()
+        row = {"epoch": epoch, "global_step": global_step, "train": train_metrics, "val": val_metrics}
         history.append(row)
         print(
             f"epoch={epoch:03d} train_acc={train_metrics['acc']:.4f} "
             f"val_acc={val_metrics['acc']:.4f} val_loss={val_metrics['loss']:.4f}"
         )
-        torch.save({"model": model.state_dict(), **checkpoint_config, "epoch": epoch}, ckpt_dir / "last.pt")
+        torch.save({"model": model.state_dict(), **checkpoint_config, "epoch": epoch,
+                    "global_step": global_step}, ckpt_dir / "last.pt")
         if val_metrics["acc"] > best_val_acc:
             best_val_acc = val_metrics["acc"]
             best_epoch = epoch
             best_state = copy.deepcopy(model.state_dict())
             torch.save(
-                {"model": best_state, **checkpoint_config, "epoch": epoch, "val_acc": best_val_acc},
+                {"model": best_state, **checkpoint_config, "epoch": epoch,
+                 "global_step": global_step, "val_acc": best_val_acc},
                 ckpt_dir / "best_val_acc.pt",
             )
             stale = 0
@@ -837,6 +893,9 @@ def main(cfg: DictConfig) -> None:
         "test": test_metrics,
         "total_params": total_params,
         "trainable_params": trainable_params,
+        "global_step": global_step,
+        "device": str(device),
+        "torch_version": str(torch.__version__),
         "history": history,
     }
     (out_dir / "metrics.json").write_text(json.dumps(summary, indent=2))

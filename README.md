@@ -16,6 +16,7 @@ The code includes:
 - discrete ORGaNICs recurrent baselines;
 - Hydra configs for raw waveform and MFCC Speech Commands inputs;
 - Hydra configs for full BPTT and spatial-only backpropagation;
+- [selective copying](docs/selective_copying.md) with the best recorded local-learning selective RQF recipe and a CPU smoke configuration;
 - a simple PyTorch training script.
 
 The paper tables were produced from five seeds. This review repository defaults to `seed=0` and exposes the same model/configuration axes so each reported configuration can be re-run directly.

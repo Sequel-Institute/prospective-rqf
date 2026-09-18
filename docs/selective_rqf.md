@@ -1,5 +1,10 @@
 # Selective Pure RQF
 
+For the selective copying task, the ported local-learning recipe, and local
+training commands, see [selective copying](selective_copying.md).
+The [validation record](selective_copying_local_validation.md#cuda-follow-up)
+also covers native CUDA/Triton tests on an A10G with PyTorch 2.7.1 and Triton 3.3.1.
+
 `model=pure_rqf_selective` inherits `pure_rqf_paper`. Selectivity is also exposed
 as `PureRQFEncoder(..., selective=SelectiveRQFConfig(...))` or a dictionary.
 `selective=None` preserves the static model's modules, parameters and checkpoint

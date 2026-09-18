@@ -38,6 +38,9 @@ class BaseRQFEncoder(nn.Module, ABC):
             list of dicts (same for all layers) or a list of lists (one per
             layer). Resolved to ``layer_filter_scales`` before being passed to
             ``_create_blocks``.
+        input_projection: Project inputs before the first block. If false,
+            the first block maps raw inputs to the first hidden width.
+        output_projection: Create a final linear projection.
     """
 
     _block_class: type[nn.Module]
@@ -50,6 +53,8 @@ class BaseRQFEncoder(nn.Module, ABC):
         num_layers: int,
         norm_type: str = "none",
         filter_scales: list[dict] | list[list[dict]] | None = None,
+        input_projection: bool = True,
+        output_projection: bool = True,
     ) -> None:
         super().__init__()
 
@@ -58,6 +63,7 @@ class BaseRQFEncoder(nn.Module, ABC):
         self.hidden_dims = hidden_dims
         self.num_layers = num_layers
         self.norm_type = norm_type
+        self.input_projection = input_projection
         self._use_batch_norm = norm_type == "batch"
 
         # Normalize hidden_dims to per-layer list
@@ -74,7 +80,9 @@ class BaseRQFEncoder(nn.Module, ABC):
         self._layer_filter_scales = self._resolve_filter_scales(filter_scales, num_layers)
 
         # Input projection
-        self.input_proj = nn.Linear(input_dims, self._layer_dims[0])
+        self.input_proj = (
+            nn.Linear(input_dims, self._layer_dims[0]) if input_projection else nn.Identity()
+        )
 
         # Blocks — subclass creates the specific block type
         self.blocks = self._create_blocks(self._layer_filter_scales)
@@ -88,7 +96,9 @@ class BaseRQFEncoder(nn.Module, ABC):
             self.final_norm = nn.LayerNorm(self._layer_dims[-1])
 
         # Output projection
-        self.output_proj = nn.Linear(self._layer_dims[-1], output_dims)
+        self.output_proj = (
+            nn.Linear(self._layer_dims[-1], output_dims) if output_projection else nn.Identity()
+        )
 
     @staticmethod
     def _resolve_filter_scales(
@@ -133,10 +143,14 @@ class BaseRQFEncoder(nn.Module, ABC):
         """
         blocks = []
         for i in range(self.num_layers):
+            d_in = self._layer_dims[i]
             d_out = self._layer_dims[i + 1] if i < self.num_layers - 1 else None
+            if not self.input_projection:
+                d_in = self.input_dims if i == 0 else self._layer_dims[i - 1]
+                d_out = self._layer_dims[i]
             blocks.append(
                 self._block_class(
-                    d_model=self._layer_dims[i],
+                    d_model=d_in,
                     d_model_out=d_out,
                     filter_scales=layer_filter_scales[i],
                     **self._block_kwargs,
