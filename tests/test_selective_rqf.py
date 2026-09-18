@@ -533,6 +533,30 @@ class SelectiveIntegrationTest(unittest.TestCase):
                         )
                         self.assertEqual(group["lr"], cfg.training.learning_rate)
 
+    def test_standalone_block_calls_match_encoder_or_fail_loudly(self):
+        x = torch.randn(2, 9, 3)
+        for source_mode in ("layer_output", "layer_input"):
+            net = make_model(
+                dict(VARIANTS[-1], input_source=source_mode), active=True, skip_connection=True
+            )
+            h = net.input_proj(x).to(net.blocks[0].W.dtype)
+            source = h
+            for block in net.blocks:
+                raw_call = (lambda: block(h, source=source)) if source_mode == "layer_output" else (
+                    lambda: block(h)
+                )
+                activate, block.apply_activation = block.apply_activation, False
+                raw = raw_call()
+                block.apply_activation = activate
+                out = torch.complex(raw.real.relu(), raw.imag.relu()) if activate else raw
+                skip = out.shape == h.shape
+                source = raw + h if skip else raw
+                h = out + h if skip else out
+            torch.testing.assert_close(h, net(x), rtol=1e-4, atol=1e-5)
+        block = make_model(dict(VARIANTS[-1], input_source="layer_output")).blocks[0]
+        with self.assertRaisesRegex(ValueError, "layer_output"):
+            block(x.to(torch.complex64))
+
     def test_checkpoint_resume_and_settings(self):
         net = make_model(VARIANTS[-1], active=True)
         opt = torch.optim.AdamW(net.parameters(), lr=0.001)

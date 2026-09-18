@@ -225,6 +225,9 @@ class RQF(nn.Module):
         self.use_b_matrix = use_b_matrix
         self.input_features = input_features
         self.clamp_gamma = clamp_gamma
+        # Lowers the resting log_gamma ceiling in clamp_parameters. Set by
+        # SelectiveController for the log_shift gamma link so the resting
+        # value plus the bounded input-dependent shift stays below max_gamma.
         self.gamma_log_headroom = 0.0
 
         # Default tau to dt * 10 if not specified

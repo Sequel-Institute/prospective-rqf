@@ -112,7 +112,7 @@ class PureRQFBlock(BaseRQFBlock):
                                     activate=self.apply_activation, write_raw=write_raw,
                                     use_kernel=use_kernel)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, source: torch.Tensor | None = None) -> torch.Tensor:
         """Forward pass: W @ input → scan → activation.
 
         Delegates the scan dispatch (prospective vs standard) to
@@ -122,16 +122,27 @@ class PureRQFBlock(BaseRQFBlock):
 
         Args:
             x: Complex tensor ``(batch, time, d_model)``.
+            source: Selector source ``(batch, time, d_model)`` for selective
+                blocks configured with ``input_source="layer_output"`` (the
+                raw, pre-activation previous-layer output plus any skip).
+                Ignored for static blocks; for ``layer_input`` selectors the
+                block reads ``x`` itself.
 
         Returns:
             Complex tensor ``(batch, time, d_model_out)``.
         """
         if self.selector is not None:
-            # Standalone block call: the selector reads this block's own input
-            # (``layer_input`` semantics); the encoder stack supplies the raw
-            # previous-layer source for ``layer_output``.
-            source = x.permute(2, 0, 1)
-            raw, act = self._forward_selective(source, source,
+            if self.selective.input_source == "layer_output":
+                if source is None:
+                    raise ValueError(
+                        "selective block with input_source='layer_output' needs the raw "
+                        "previous-layer source: call block(x, source=raw) or run the "
+                        "block inside PureRQFEncoder"
+                    )
+                selector_source = source.permute(2, 0, 1)
+            else:
+                selector_source = x.permute(2, 0, 1)
+            raw, act = self._forward_selective(x.permute(2, 0, 1), selector_source,
                                                write_raw=not self.apply_activation)
             return (act if self.apply_activation else raw).permute(1, 2, 0)
         W_c = self.W.to(torch.complex64) if not self.W.is_complex() else self.W
@@ -438,14 +449,17 @@ class PureRQFEncoder(BaseRQFEncoder):
         source = h
         raw_selectors = self.selective.input_source == "layer_output"
         with torch.autocast(x.device.type, enabled=False):
-            for block in self.blocks:
+            for index, block in enumerate(self.blocks):
+                # The raw state feeds the next layer's selectors; the last
+                # block only needs it when its own activation is disabled.
+                needs_raw = raw_selectors and index < len(self.blocks) - 1
                 raw, act = block._forward_selective(
                     h, source if raw_selectors else h,
-                    write_raw=raw_selectors or not block.apply_activation,
+                    write_raw=needs_raw or not block.apply_activation,
                 )
                 out = act if block.apply_activation else raw
                 skip = self.skip_connection and out.shape == h.shape
-                source = (raw + h if skip else raw) if raw_selectors else None
+                source = (raw + h if skip else raw) if needs_raw else None
                 h = out + h if skip else out
         return h.permute(1, 2, 0).contiguous()
 

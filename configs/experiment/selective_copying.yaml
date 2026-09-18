@@ -16,9 +16,7 @@ model:
   encoder_kwargs:
     samp_frequency: 1.0
     tau: 5.0
-    min_freq: 0.000244140625
-    max_freq: 0.2
-    seq_duration: 4096.0
+    seq_duration: 4096.0    # derives the band [1/T, 1/tau] = [1/4096, 0.2]
     input_projection: false
     output_projection: false
   selective:
