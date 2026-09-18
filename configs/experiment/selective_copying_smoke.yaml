@@ -1,5 +1,5 @@
 # @package _global_
-# Same model and optimizer as the winning recipe; a small local execution check.
+# Same model and optimizer as selective_copying; a small CPU execution check.
 defaults:
   - selective_copying
   - _self_

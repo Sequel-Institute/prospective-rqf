@@ -1,9 +1,7 @@
 # Selective Pure RQF
 
-For the selective copying task, the ported local-learning recipe, and local
-training commands, see [selective copying](selective_copying.md).
-The [validation record](selective_copying_local_validation.md#cuda-follow-up)
-also covers native CUDA/Triton tests on an A10G with PyTorch 2.7.1 and Triton 3.3.1.
+For the selective copying task, model configuration, and training commands,
+see [selective copying](selective_copying.md).
 
 `model=pure_rqf_selective` inherits `pure_rqf_paper`. Selectivity is also exposed
 as `PureRQFEncoder(..., selective=SelectiveRQFConfig(...))` or a dictionary.
@@ -56,9 +54,8 @@ The first block reads the existing input projection. Later blocks normally use
 `x = split_relu(y) + skip` for their drive and `s = y + skip` for raw selectors.
 With `input_source=layer_input`, selectors use `x` too. The same shape-based skip
 eligibility and final-activation setting as the static encoder apply. This
-preserves this repo's activation-then-add ordering; local-learning uses a
-different residual ordering. Selectors are current-time, previous-layer
-functions, with no additional recurrent state.
+preserves the encoder's activation-then-add ordering. Selectors are current-time,
+previous-layer functions, with no additional recurrent state.
 
 ## Recurrence and learning
 

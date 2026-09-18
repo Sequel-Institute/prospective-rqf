@@ -1,8 +1,8 @@
 """Fused input-dependent ZOH scans on complex (F,B,T) tensors.
 
-Controller arithmetic follows local-learning/selective_scan.py. Only logits,
-drive, outputs and chunk entries cross the scan boundary; coefficient sequences
-and their VJPs remain in registers. Full and truncated backwards share a kernel.
+Only logits, drive, outputs and chunk entries cross the scan boundary;
+coefficient sequences and their VJPs remain in registers. Full and truncated
+backwards share a kernel.
 """
 
 import torch

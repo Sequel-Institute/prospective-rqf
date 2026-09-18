@@ -221,6 +221,19 @@ __marimo__/
 /outputs/
 /checkpoints/
 /data/
+/runs/
+/snapshots/
+
+# Local infrastructure, validation records, and agent workspace files
+/batch/
+/docs/*_local_validation.md
+/.agents/
+/.codex/
+/.claude/
+/AGENTS.md
+/CLAUDE.md
+.env.*
+
 uv.lock
 *.pt
 *.ckpt

@@ -1,4 +1,4 @@
-"""Input-only RQF controllers, matching local-learning's parameterization."""
+"""Input-dependent RQF damping, write, and frequency controllers."""
 
 from __future__ import annotations
 

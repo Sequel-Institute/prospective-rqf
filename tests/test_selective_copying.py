@@ -1,4 +1,4 @@
-"""Task semantics and end-to-end learning for the ported copying recipe."""
+"""Task semantics and end-to-end learning for selective copying."""
 
 import math
 from pathlib import Path
@@ -79,7 +79,7 @@ class SelectiveCopyingDataTest(unittest.TestCase):
 
 
 class SelectiveCopyingTrainingTest(unittest.TestCase):
-    def test_winning_recipe_matches_architecture_and_optimizer(self):
+    def test_recipe_matches_architecture_and_optimizer(self):
         cfg = copying_config()
         model = build_model(cfg)
         real_parameters = sum(p.numel() * (2 if p.is_complex() else 1)
@@ -100,7 +100,7 @@ class SelectiveCopyingTrainingTest(unittest.TestCase):
             self.assertEqual(group["weight_decay"], 0)
         self.assertEqual(cfg.training.scheduler, "none")
         self.assertEqual(cfg.training.max_epochs * cfg.data.n_train // cfg.training.batch_size,
-                         400000)
+                         100000)
 
     def test_recall_metrics_ignore_context_and_weight_partial_batches(self):
         cfg = copying_config("data.sequence_length=40", "data.n_memorize=4",

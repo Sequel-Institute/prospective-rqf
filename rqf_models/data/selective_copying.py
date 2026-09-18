@@ -1,4 +1,4 @@
-"""Selective copying with the local-learning repository's exact sample stream.
+"""Selective copying with deterministic samples for each split and epoch.
 
 Blank is 0, data symbols are 1..n_tokens-2, and n_tokens-1 marks recall.
 Sequence length includes the recall suffix. Only that suffix is supervised.

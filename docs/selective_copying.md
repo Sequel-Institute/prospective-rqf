@@ -1,25 +1,14 @@
 # Selective copying
 
-The [local validation record](selective_copying_local_validation.md) includes
-the CPU training, learning, checkpoint, and regression-test results.
-
 The task is available through the existing `train.py` and
-`evaluate_checkpoint.py` entry points. No downloads or local-learning installation
-are needed. Inputs contain randomly spaced data symbols followed by recall
+`evaluate_checkpoint.py` entry points. Data is generated without downloads.
+Inputs contain randomly spaced data symbols followed by recall
 markers. The encoder processes the entire sequence; the readout, cross-entropy,
 and accuracy use only the recall suffix, during both training and evaluation.
 
-## Recipe provenance
+## Configuration
 
-`+experiment=selective_copying` ports local-learning's
-`configs/selective_copying/2026-09-14/factorial_400epochs_lr1e-3/rqf_bptt_4x64_p_write_split_relu_400epochs_lr1e-3.json`,
-config hash `899afaa5a82768b9`, submitted at commit
-`b09e95ee31f58fdd112285f940df31259683932f`.
-Its saved 400-epoch metric history records **100% validation recall-token
-accuracy at epoch 308**, with **99.981689453125% test accuracy** at that epoch.
-This is the guide's recommended recipe and the highest test-at-best-validation
-result among the completed September 14 factorial runs. These are historical
-local-learning results, not a fresh full-budget result from this repository.
+`+experiment=selective_copying` selects the following settings:
 
 | Component | Setting |
 | --- | --- |
@@ -38,17 +27,12 @@ local-learning results, not a fresh full-budget result from this repository.
 | Budget | Batch 64, 64,000 fresh examples/epoch, 100 epochs = 100,000 updates |
 | Evaluation | Fixed validation/test sets, 1024 sequences each; validation selects the checkpoint |
 
-The port uses a reduced 100-epoch budget; the historical source run used 400 epochs.
-
 The first complex RQF weight maps the 16 one-hot inputs directly to 64 filters.
 The optional `input_projection=false` and `output_projection=false` settings
 avoid additional or unused projections. Existing encoder configurations retain
-their projection defaults. Parameter initialization uses this repository's RNG
-draw ordering; seed 0 does not imply bitwise-identical initialization to
-local-learning. This trainer also uses its existing eager execution rather than
-local-learning's CUDA-graph training loop.
+their projection defaults. Training uses eager execution with seed 0 by default.
 
-The generator preserves local-learning's seed/split/epoch/index sample keys.
+The generator keys each sample by seed, split, epoch, and sample index.
 Token 0 is blank, tokens 1–14 carry data, and token 15 is the recall marker.
 Sixteen distinct positions in the first 4080 timesteps hold data, sampled with
 replacement from tokens 1–14. The final 16 inputs are recall markers; the targets
@@ -97,6 +81,6 @@ The complete GPU training recipe is:
 .venv/bin/python train.py +experiment=selective_copying device=cuda
 ```
 
-CPU runs exercise the PyTorch selective recurrence. Native CUDA/Triton execution
-was also checked on the local A10G outside the device-restricted sandbox; see
-the validation record. Full-budget convergence remains untested in this port.
+CPU runs use the PyTorch selective recurrence; CUDA runs use the fused Triton
+implementation. See [selective RQF](selective_rqf.md#validation-commands) for
+backend validation commands.

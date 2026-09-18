@@ -110,7 +110,7 @@ class ComplexReadoutClassifier(nn.Module):
                 out,
             )
             if recall_steps is not None:
-                # Match local-learning's He-normal hidden readout initialization.
+                # He-normal initialization for the recall readout's hidden layer.
                 nn.init.normal_(self.head[0].weight, std=(2.0 / in_dim) ** 0.5)
                 nn.init.zeros_(self.head[0].bias)
 
