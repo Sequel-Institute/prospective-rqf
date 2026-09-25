@@ -88,6 +88,11 @@ class SelectiveCopyingTrainingTest(unittest.TestCase):
         self.assertEqual([tuple(b.W.shape) for b in model.encoder.blocks],
                          [(64, 16), (64, 64), (64, 64), (64, 64)])
         self.assertEqual(model.encoder.selective.input_source, "layer_output")
+        self.assertEqual(model.encoder.selective.write_link, "sigmoid")
+        self.assertEqual(model.encoder.selective.write_max, 2.0)
+        self.assertEqual(model.encoder.selective.gamma_edge, "interior_clamp")
+        self.assertEqual(model.encoder.selective.gamma_edge_margin, 0.001)
+        self.assertEqual(model.encoder.selective.warp_bound, "band")
         self.assertEqual(model.encoder.selective.max_log_scale, math.log(4))
         self.assertEqual(model.recall_steps, 16)
         self.assertIsInstance(model.encoder.input_proj, torch.nn.Identity)

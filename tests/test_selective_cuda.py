@@ -7,12 +7,14 @@ and do not validate GPU compilation, scheduling, or performance.
 import copy
 import importlib.util
 import itertools
+import math
 import os
 import unittest
 from unittest import mock
 
 import torch
 
+from rqf_models.backbones.rqf.selective import SelectiveController
 from rqf_models.ops.selective_scan import selective_layer_scan
 from test_selective_rqf import (
     CONTROLLER_CASES,
@@ -64,6 +66,10 @@ class SelectiveKernelTest(unittest.TestCase):
         collapse=False,
         autocast=False,
         conjugate_cot=False,
+        saturate_write=False,
+        freeze_base=False,
+        clip_warp=False,
+        gamma_edges=False,
         chunk=32,
     ):
         block = (
@@ -74,10 +80,20 @@ class SelectiveKernelTest(unittest.TestCase):
                 prospective_input=prospective,
                 prospective_mode=mode,
                 prospective_tau=horizon,
+                samp_frequency=4.0 if clip_warp else 100.0,
             )
             .blocks[0]
             .to(self.device)
         )
+        if freeze_base:
+            block.rqf_fwd.requires_grad_(False)
+            block.W.requires_grad_(False)
+            config = block.selector.config
+            block.selector = SelectiveController(block.W.shape[1], block.rqf_fwd, config).to(self.device)
+            with torch.no_grad():
+                for parameter in block.selector.parameters():
+                    parameter.normal_(std=0.3)
+            self.assertTrue(all(p.requires_grad for p in block.selector.parameters()))
         with torch.no_grad():
             if tiny:
                 block.rqf_fwd.log_gamma.fill_(-70.0)
@@ -87,6 +103,20 @@ class SelectiveKernelTest(unittest.TestCase):
             if block.selector.W_write is not None:
                 block.selector.W_write[0].zero_()
                 block.selector.W_write[0, 0] = -1.0
+            if clip_warp:
+                lower, upper = block.rqf_fwd._theta_bounds()
+                block.rqf_fwd.log_theta.copy_((lower * upper).sqrt().log())
+                block.selector.W_delta.zero_()
+                block.selector.W_delta[:, 0] = 1.0
+            if gamma_edges:
+                block.rqf_fwd.log_gamma[:2] = -50.0
+                block.rqf_fwd.log_gamma[2:] = 50.0
+                block.rqf_fwd.clamp_parameters()
+                block.selector.W_gamma.zero_()
+                margin = block.selector.config.gamma_edge_margin
+                offset = math.log((1 - margin) / margin)
+                block.selector.W_gamma[:2, 0] = offset
+                block.selector.W_gamma[2:, 0] = -offset
         if freeze:
             block.selector.requires_grad_(False)
             block.rqf_fwd.requires_grad_(False)
@@ -96,9 +126,19 @@ class SelectiveKernelTest(unittest.TestCase):
         )
         s = torch.randn_like(x).requires_grad_()
         with torch.no_grad():
-            s[0, 0, 0] = 1.0  # Exactly zero write gate.
+            # These force zero/negative gates for affine and finite gates for sigmoid.
+            s[0, 0, 0] = 1.0
             if time > 1:
-                s[0, 0, 1] = 2.0  # Negative gate.
+                s[0, 0, 1] = 2.0
+            if saturate_write:
+                s[0, 0, :3] = torch.tensor([-1000.0, 0.0, 1000.0], device=self.device)
+            if clip_warp:
+                # Interior and clipped samples both have nonsaturated tanh
+                # derivatives, so omitted clipping masks fail gradient parity.
+                pattern = torch.tensor([-2.0, 0.1, 2.0], device=self.device)
+                s[0] = pattern.repeat((time + 2) // 3)[:time]
+            if gamma_edges:
+                s[0] = torch.linspace(0.9, 1.1, time, device=self.device)
         xr, sr = (
             x.detach().clone().requires_grad_(),
             s.detach().clone().requires_grad_(),
@@ -142,6 +182,10 @@ class SelectiveKernelTest(unittest.TestCase):
             else:
                 self.assertIsNotNone(a)
                 torch.testing.assert_close(a, e, rtol=4e-3, atol=3e-4)
+        if freeze_base:
+            for gradient in actual_grads[2:]:
+                self.assertIsNotNone(gradient)
+                self.assertGreater(float(gradient.abs().sum()), 0)
 
     def test_empty_inputs(self):
         assert_empty_input_support(self, self.device)
@@ -172,6 +216,31 @@ class SelectiveKernelTest(unittest.TestCase):
         for time, truncated in itertools.product((1, 255, 256, 257), (False, True)):
             with self.subTest(time=time, truncated=truncated, chunk="automatic"):
                 self.compare(VARIANTS[-2], time=time, truncated=truncated, chunk=None)
+
+    def test_sigmoid_write_nondefault_bound_and_saturation(self):
+        for prospective, truncated in itertools.product((False, True), (False, True)):
+            for maximum, saturated in ((1.25, False), (3.0, True)):
+                with self.subTest(
+                    prospective=prospective, truncated=truncated,
+                    maximum=maximum, saturated=saturated,
+                ):
+                    self.compare(
+                        dict(VARIANTS[-2], write_link="sigmoid", write_max=maximum),
+                        prospective=prospective,
+                        truncated=truncated,
+                        saturate_write=saturated,
+                    )
+
+    def test_clipped_frequency_gradients_and_frozen_base_heads(self):
+        variant = dict(write_control=True, frequency_warp="global", max_log_scale=math.log(4))
+        for truncated, frozen in ((False, False), (True, False), (False, True), (True, True)):
+            with self.subTest(truncated=truncated, frozen=frozen):
+                self.compare(variant, truncated=truncated, clip_warp=True, freeze_base=frozen)
+
+    def test_interior_gamma_edges_with_nonzero_offsets(self):
+        for truncated in (False, True):
+            with self.subTest(truncated=truncated):
+                self.compare({"write_control": True}, truncated=truncated, gamma_edges=True)
 
     def test_horizons_frozen_heads_and_numerical_edges(self):
         for truncated, mode, horizon in itertools.product(

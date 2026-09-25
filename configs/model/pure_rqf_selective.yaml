@@ -8,8 +8,13 @@ selective:
   gamma_link: sigmoid
   gamma_features: real_imag
   gamma_max_log_scale: 0.22314355131420976
+  gamma_edge: interior_clamp
+  gamma_edge_margin: 0.001
   write_control: false
+  write_link: sigmoid
+  write_max: 2.0
   frequency_warp: none
+  warp_bound: band
   num_groups: 4
   max_log_scale: 0.22314355131420976
   input_source: layer_output

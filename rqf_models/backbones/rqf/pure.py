@@ -44,6 +44,30 @@ except ImportError:
 _FBT_RECOMPUTE_MIN_GRID = 256
 
 
+def validate_selective_tbptt_mode(
+    *,
+    scan_grad_mode: str,
+    tbptt_delayed_input_mode: str,
+    prospective_input: bool,
+    prospective_tau: float | list[float] | torch.Tensor | None,
+) -> None:
+    """Reject an unsupported lag gradient only when its tap is nonzero."""
+    if (scan_grad_mode != "tbptt1" or tbptt_delayed_input_mode != "literal"
+            or not prospective_input):
+        return
+    # With fixed positive tau, an explicit all-zero horizon removes the lag
+    # tap. None selects the nonzero default for either prospective mode.
+    if prospective_tau is not None:
+        horizon = (prospective_tau if isinstance(prospective_tau, torch.Tensor)
+                   else torch.as_tensor(prospective_tau, dtype=torch.float64))
+        if not bool(horizon.ne(0).any()):
+            return
+    raise ValueError(
+        "selective Pure RQF does not support tbptt_delayed_input_mode='literal' "
+        "with prospective TBPTT(1) and a nonzero horizon; use 'strict' or full BPTT"
+    )
+
+
 class PureRQFBlock(BaseRQFBlock):
     """Pure RQF block: Complex Linear → ZOH scan → split activation.
 
@@ -100,10 +124,20 @@ class PureRQFBlock(BaseRQFBlock):
             if (not bool((torch.isfinite(rqf.tau) & (rqf.tau > 0)).all())
                     or not math.isfinite(rqf.dt) or rqf.dt <= 0):
                 raise ValueError("selective tau and dt must be positive and finite")
-            self.selector = SelectiveController(d_model, rqf, self.selective, self.W.requires_grad)
+            self._validate_selective_tbptt_mode()
+            self.selector = SelectiveController(d_model, rqf, self.selective)
+
+    def _validate_selective_tbptt_mode(self) -> None:
+        validate_selective_tbptt_mode(
+            scan_grad_mode=self.scan_grad_mode,
+            tbptt_delayed_input_mode=self.tbptt_delayed_input_mode,
+            prospective_input=self.prospective_input,
+            prospective_tau=self.prospective_tau,
+        )
 
     def _forward_selective(self, x: torch.Tensor, source: torch.Tensor, *,
                            write_raw: bool = True) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        self._validate_selective_tbptt_mode()
         inputs = self.selector(source, self.rqf_fwd, prospective=self.prospective_input,
                                mode=self.prospective_mode, prospective_tau=self.prospective_tau)
         use_kernel = (_scan_module._SCAN_BACKEND == "chunked"

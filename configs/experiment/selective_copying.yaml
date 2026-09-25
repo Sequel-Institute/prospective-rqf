@@ -23,8 +23,13 @@ model:
     gamma_control: true
     gamma_link: sigmoid
     gamma_features: real_imag
+    gamma_edge: interior_clamp
+    gamma_edge_margin: 0.001
     write_control: true
+    write_link: sigmoid
+    write_max: 2.0
     frequency_warp: grouped
+    warp_bound: band
     num_groups: 4
     max_log_scale: 1.3862943611198906  # ln(4): frequency multipliers in [1/4, 4]
     input_source: layer_output

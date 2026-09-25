@@ -19,8 +19,13 @@ class SelectiveRQFConfig:
     gamma_link: str = "sigmoid"
     gamma_features: str = "real_imag"
     gamma_max_log_scale: float = math.log(1.25)
+    gamma_edge: str = "interior_clamp"
+    gamma_edge_margin: float = 1e-3
     write_control: bool = False
+    write_link: str = "sigmoid"
+    write_max: float = 2.0
     frequency_warp: str = "none"
+    warp_bound: str = "band"
     num_groups: int = 4
     max_log_scale: float = math.log(1.25)
     input_source: str = "layer_output"
@@ -29,7 +34,10 @@ class SelectiveRQFConfig:
         for name, choices in (
             ("gamma_link", {"sigmoid", "log_shift"}),
             ("gamma_features", {"real_imag", "modulus"}),
+            ("gamma_edge", {"interior_clamp", "st_clamp"}),
+            ("write_link", {"affine", "sigmoid"}),
             ("frequency_warp", {"none", "global", "grouped"}),
+            ("warp_bound", {"band", "none"}),
             ("input_source", {"layer_input", "layer_output"}),
         ):
             if getattr(self, name) not in choices:
@@ -38,6 +46,10 @@ class SelectiveRQFConfig:
             raise ValueError("selective controller switches must be booleans")
         if type(self.num_groups) is not int or self.num_groups < 1:
             raise ValueError("selective.num_groups must be a positive integer")
+        if not math.isfinite(self.write_max) or self.write_max <= 1:
+            raise ValueError("selective.write_max must be finite and greater than one")
+        if not math.isfinite(self.gamma_edge_margin) or not 0 < self.gamma_edge_margin < 0.5:
+            raise ValueError("selective.gamma_edge_margin must be finite and in (0, 0.5)")
         for name in ("gamma_max_log_scale", "max_log_scale"):
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
@@ -87,7 +99,7 @@ class _SplitProjection(torch.autograd.Function):
 
 class SelectiveController(nn.Module):
     def __init__(
-        self, n_in: int, rqf: nn.Module, config: SelectiveRQFConfig, learn_write: bool
+        self, n_in: int, rqf: nn.Module, config: SelectiveRQFConfig
     ) -> None:
         super().__init__()
         self.config = config
@@ -111,26 +123,41 @@ class SelectiveController(nn.Module):
             if not bool((lo.log() < hi.log() - config.gamma_max_log_scale).all()):
                 raise ValueError("gamma_max_log_scale leaves no resting gamma range")
             rqf.gamma_log_headroom = config.gamma_max_log_scale
+        interior_gamma = (
+            config.gamma_control
+            and config.gamma_link == "sigmoid"
+            and config.gamma_edge == "interior_clamp"
+        )
+        if interior_gamma:
+            rqf.gamma_edge_margin = config.gamma_edge_margin
+            span = hi - lo
+            if not bool(((lo + span * config.gamma_edge_margin > lo)
+                         & (hi - span * config.gamma_edge_margin < hi)).all()):
+                raise ValueError("gamma_edge_margin is too small for the parameter precision")
+        if groups and config.warp_bound == "band":
+            rqf.theta_nyquist_bound = True
+            lower, upper = rqf._theta_bounds()
+            if not bool((torch.isfinite(lower) & torch.isfinite(upper)
+                         & (lower > 0) & (upper >= lower)).all()):
+                raise ValueError("selective frequency band has no positive Nyquist-safe range")
+        if config.gamma_link == "log_shift" or interior_gamma or rqf.theta_nyquist_bound:
             rqf.clamp_parameters()
         self.W_gamma = (
             nn.Parameter(
                 torch.zeros(
                     n_out, n_in if config.gamma_features == "modulus" else 2 * n_in
                 ),
-                requires_grad=rqf.log_gamma.requires_grad,
             )
             if config.gamma_control
             else None
         )
         self.W_write = (
-            nn.Parameter(torch.zeros(n_out, 2 * n_in), requires_grad=learn_write)
+            nn.Parameter(torch.zeros(n_out, 2 * n_in))
             if config.write_control
             else None
         )
         self.W_delta = (
-            nn.Parameter(
-                torch.zeros(groups, 2 * n_in), requires_grad=rqf.log_theta.requires_grad
-            )
+            nn.Parameter(torch.zeros(groups, 2 * n_in))
             if groups
             else None
         )
@@ -141,7 +168,27 @@ class SelectiveController(nn.Module):
         return asdict(self.config)
 
     def set_extra_state(self, state: dict[str, Any]) -> None:
-        if SelectiveRQFConfig(**state) != self.config:
+        # Checkpoints predating write_link used the signed affine gain.
+        stored = dict(state)
+        stored.setdefault("write_link", "affine")
+        stored.setdefault("gamma_edge", "st_clamp")
+        stored.setdefault("warp_bound", "none")
+        restored = asdict(SelectiveRQFConfig(**stored))
+        current = asdict(self.config)
+        for settings in (restored, current):
+            if not settings["gamma_control"] or settings["gamma_link"] != "sigmoid":
+                settings.pop("gamma_edge")
+                settings.pop("gamma_edge_margin")
+            elif settings["gamma_edge"] == "st_clamp":
+                settings.pop("gamma_edge_margin")
+            if settings["frequency_warp"] == "none":
+                settings.pop("warp_bound")
+            if not settings["write_control"]:
+                settings.pop("write_link")
+                settings.pop("write_max")
+            elif settings["write_link"] == "affine":
+                settings.pop("write_max")
+        if restored != current:
             raise ValueError("checkpoint selective settings do not match the model")
 
     def forward(
@@ -178,15 +225,15 @@ class SelectiveController(nn.Module):
             log_shift = self.config.gamma_link == "log_shift"
             bias = rqf.log_gamma if log_shift else rqf.gamma
             if self.W_gamma is not None and not log_shift:
-                # Straight-through clamp: the logit is evaluated strictly inside
-                # (0, 1), but the gradient follows the unclamped resting gamma.
-                # clamp_parameters projects log_gamma exactly onto the band
-                # edges, where a plain clamp would zero d gamma / d log_gamma
-                # forever; this keeps the static model's derivative there.
-                eps = torch.finfo(dtype).eps
                 resting = (bias - lo) / span
-                interior = resting.clamp(eps, 1 - eps)
-                bias = torch.logit(resting + (interior - resting).detach())
+                if self.config.gamma_edge == "st_clamp":
+                    # Historical boundary semantics for existing checkpoints.
+                    eps = torch.finfo(dtype).eps
+                    interior = resting.clamp(eps, 1 - eps)
+                    resting = resting + (interior - resting).detach()
+                # Interior mode projects the parameter at construction and
+                # after updates, so this logit needs no surrogate derivative.
+                bias = torch.logit(resting)
             tau = rqf.tau.to(dtype)
             horizon = (
                 torch.ones_like(tau)
@@ -196,7 +243,9 @@ class SelectiveController(nn.Module):
             )
             horizon = torch.broadcast_to(horizon, tau.shape).contiguous()
             # has_gamma, has_warp, has_write, log_shift, gamma_scale, warp_scale,
-            # prospective, gamma-dependent horizon. Other horizons use a vector.
+            # prospective, gamma-dependent horizon, sigmoid write, maximum, bias,
+            # bounded frequency warp.
+            # Other horizons use a vector.
             options = (
                 self.W_gamma is not None,
                 self.W_delta is not None,
@@ -206,7 +255,12 @@ class SelectiveController(nn.Module):
                 self.config.max_log_scale,
                 prospective,
                 mode == "gamma" and prospective_tau is None,
+                self.W_write is not None and self.config.write_link == "sigmoid",
+                float(self.config.write_max),
+                -math.log(self.config.write_max - 1),
+                self.W_delta is not None and self.config.warp_bound == "band",
             )
+            theta_minimum, theta_maximum = rqf._theta_bounds()
             return SelectiveScanInputs(
                 g.reshape(g.shape[0], batch, time),
                 d.reshape(d.shape[0], batch, time),
@@ -218,5 +272,7 @@ class SelectiveController(nn.Module):
                 span,
                 rqf.dt / tau,
                 horizon,
+                theta_minimum.to(dtype),
+                theta_maximum.to(dtype),
                 options,
             )

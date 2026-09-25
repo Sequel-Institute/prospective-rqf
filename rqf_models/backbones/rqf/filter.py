@@ -229,6 +229,8 @@ class RQF(nn.Module):
         # SelectiveController for the log_shift gamma link so the resting
         # value plus the bounded input-dependent shift stays below max_gamma.
         self.gamma_log_headroom = 0.0
+        self.gamma_edge_margin = 0.0
+        self.theta_nyquist_bound = False
 
         # Default tau to dt * 10 if not specified
         if tau is None:
@@ -366,6 +368,14 @@ class RQF(nn.Module):
             return torch.exp(self.log_theta)
         return 2 * np.pi * self.freq * self.tau
 
+    def _theta_bounds(self) -> tuple[torch.Tensor, torch.Tensor]:
+        tau = self.tau
+        lower = 2 * np.pi * self._min_freq * tau
+        upper = 2 * np.pi * self._max_freq * tau
+        if self.theta_nyquist_bound:
+            upper = torch.minimum(upper, np.pi * tau / self.dt)
+        return lower, upper
+
     @torch.no_grad()
     def clamp_parameters(self) -> None:
         """Project log-space leaves back into their valid bands (post-step).
@@ -380,13 +390,14 @@ class RQF(nn.Module):
         """
         if self.param_space != "log":
             return
-        tau = self.tau
+        theta_lower, theta_upper = self._theta_bounds()
         self.log_theta.clamp_(
-            min=torch.log(2 * np.pi * self._min_freq * tau),
-            max=torch.log(2 * np.pi * self._max_freq * tau),
+            min=torch.log(theta_lower),
+            max=torch.log(theta_upper),
         )
-        self.log_gamma.clamp_(min=torch.log(self._min_gamma),
-                             max=torch.log(self._max_gamma) - self.gamma_log_headroom)
+        margin = self.gamma_edge_margin * (self._max_gamma - self._min_gamma)
+        self.log_gamma.clamp_(min=torch.log(self._min_gamma + margin),
+                             max=torch.log(self._max_gamma - margin) - self.gamma_log_headroom)
         if self.clamp_gamma:
             omega_tau = self.log_theta.exp()
             gamma_min = 1 - 1 / torch.sqrt(1 + omega_tau**2)

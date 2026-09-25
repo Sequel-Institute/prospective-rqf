@@ -88,7 +88,7 @@ python train.py data=speech_commands_mfcc data.use_synthetic=true training.max_e
 ### Input-dependent Pure RQF
 
 `model=pure_rqf_selective` extends the paper recipe with input-dependent damping,
-an optional signed write gate, and optional global/grouped frequency warps. It
+an optional bounded sigmoid write gate, and optional global/grouped frequency warps. It
 supports full BPTT and spatial-only TBPTT(1), with split ReLU, ZOH, log-space
 parameters, and fixed tau. The default enables damping selection only.
 

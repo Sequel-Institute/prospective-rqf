@@ -20,8 +20,13 @@ ReLU. The final activation can still be disabled for a raw complex readout.
 | `gamma_link` | `sigmoid` | `sigmoid` or multiplicative `log_shift`. |
 | `gamma_features` | `real_imag` | Signed planes, or `modulus` for gamma only. |
 | `gamma_max_log_scale` | `log(1.25)` | Log-shift gamma bound. |
-| `write_control` | `false` | Enable the signed write multiplier. |
+| `gamma_edge` | `interior_clamp` | Interior resting gamma, or historical `st_clamp`. |
+| `gamma_edge_margin` | `0.001` | Normalized resting-gamma margin at both edges; in `(0, 0.5)`. |
+| `write_control` | `false` | Enable input-dependent write gain. |
+| `write_link` | `sigmoid` | Bounded positive `sigmoid`, or historical signed `affine`. |
+| `write_max` | `2.0` | Sigmoid gain ceiling; finite and greater than one. |
 | `frequency_warp` | `none` | `none`, `global`, or `grouped`. |
+| `warp_bound` | `band` | Bound warped frequency to the band and Nyquist; `none` restores historical warping. |
 | `num_groups` | `4` | Group count for grouped frequency warps. |
 | `max_log_scale` | `log(1.25)` | Frequency log-scale bound. |
 | `input_source` | `layer_output` | Raw branch, or `layer_input` for the actual drive input. |
@@ -30,18 +35,37 @@ For selector source `s`, let `v = [Re(s); Im(s)]`. Gamma's features `f` are `v`
 or `abs(s)`; magnitude features have zero subgradient at the origin.
 
 - Sigmoid gamma: `gamma = min + span * sigmoid(b + W_gamma @ f)`, where `b`
-  is the floating-point-interior logit of normalized resting `exp(log_gamma)`.
-  The interior clamp is straight-through, so filters that `clamp_parameters`
-  projects onto a band edge keep the static model's `d gamma / d log_gamma`.
+  is the logit of normalized resting `exp(log_gamma)`. The default projects
+  resting gamma into `[min + margin*span, max - margin*span]` at initialization
+  and after updates. The logit uses ordinary autograd, without a straight-through
+  clamp. At margin `0.001`, the derivative amplification relative to resting
+  gamma is bounded by `1/(4*margin*(1-margin))`, approximately 250.25.
+  `gamma_edge=st_clamp` preserves the historical machine-epsilon interior
+  logit and straight-through gradient for checkpoint reproduction.
 - Log-shift gamma: `gamma = exp(log_gamma + c * tanh(W_gamma @ f))`. The
   resting ceiling is lowered to `max_gamma * exp(-c)` at construction and after
   updates. This can change initial damping even with a zero head. Effective
   damping remains positive but can lie below the resting lower bound.
-- Signed write: `gate = 1 + W_write @ v`, with no sigmoid or clipping.
+- Bounded write (default): `gate = write_max * sigmoid(W_write @ v - log(write_max - 1))`.
+  The gain lies in `(0, write_max)` and equals one at a zero head. Its logit
+  derivative is `gate * (1 - gate / write_max)`. Floating-point saturation can
+  reach either endpoint. The fixed offset adds no trainable parameter.
+- Affine write (`write_link=affine`): `gate = 1 + W_write @ v`, signed and
+  unbounded. `write_max` is inert for this link; both options are inert when
+  write control is disabled.
 - Frequency: `delta = max_log_scale * tanh(W_delta @ v)`, then
-  `theta = exp(log_theta) * exp(delta[group])`.
+  `theta = exp(log_theta) * exp(delta[group])`. With `warp_bound=band`, clamp
+  this effective theta to `[2*pi*min_freq*tau, min(2*pi*max_freq*tau, pi*tau/dt)]`.
+  Resting theta uses the same bounds; an empty or nonpositive allowed band is
+  rejected. The conservative ceiling guarantees `(1-gamma)*theta*dt/tau <= pi`.
+  Gradients to both the resting frequency and warp head are zero outside the
+  cap, with the same boundary convention in PyTorch and CUDA. `warp_bound=none`
+  retains the original unconstrained effective frequency.
 
 All heads are bias-free and start at zero without consuming random numbers.
+Enabled heads are trainable independently of their resting parameters. A frozen
+resting gamma or frequency does not freeze its controller. Explicitly freezing
+the selector or complete model still disables its gradients.
 Gamma and frequency heads use the dynamics learning rate and zero weight decay;
 the write head follows `W`. Group membership is `initial_rank * G // F`, using
 stable initial `log_theta` ranks, and is saved as a fixed buffer. Gamma, write,
@@ -78,6 +102,10 @@ Full BPTT differentiates the complete trajectory. TBPTT(1) detaches `y[t-1]`
 and the source `x[t-1]`, while keeping `W*x[t-1].detach()` differentiable into
 the current layer's weight. All current selectors remain differentiable,
 including their dependence on raw previous-layer outputs.
+Selective prospective TBPTT(1) supports only the `strict` delayed-input graph.
+Requesting `tbptt_delayed_input_mode=literal` with a nonzero delayed tap raises
+an error at configuration/model validation or dispatch. The setting is inert
+for full BPTT, non-prospective input, and an explicitly zero horizon.
 
 The CUDA implementation keeps complex `(F,B,T)` tensors and computes controller
 links and coefficients in FP32 registers. Backward replays each chunk from its
@@ -87,8 +115,16 @@ Grouped warp and resting-parameter reductions are deterministic.
 
 Selector settings are saved in module extra state as well as the training
 config; loading a checkpoint into different selector settings raises an error.
+Checkpoints without `write_link` metadata retain affine semantics; explicitly
+select `write_link=affine` when loading these into a model with write control.
 New training checkpoints also save Hydra overrides so `evaluate_checkpoint.py`
 can reconstruct the selective architecture and controller options.
+Evaluation restores the saved write link and ceiling even if preset defaults
+have since changed; saved configurations without the link use affine gain.
+Missing `gamma_edge` and `warp_bound` settings restore `st_clamp` and `none`,
+respectively, before the model is built. This also preserves checkpoints with
+bounded write gain that predate the new gamma and frequency policies. Loading
+these weights into a model with different active boundary policies is rejected.
 Legacy static checkpoints continue to load strictly. Cross-repository checkpoint
 conversion and other prospective-horizon families are not included.
 

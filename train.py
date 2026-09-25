@@ -22,6 +22,7 @@ from tqdm.auto import tqdm
 from rqf_models.cells.implementations.organics_cell import ORGaNICsCell
 from rqf_models.cells.state import ORGaNICsState
 from rqf_models.backbones.rqf import PureRQFEncoder, S4RQFEncoder
+from rqf_models.backbones.rqf.pure import validate_selective_tbptt_mode
 from rqf_models.backbones.s5 import S5Encoder
 from rqf_models.data.selective_copying import SelectiveCopyingDataSpec
 
@@ -448,6 +449,17 @@ def variant_filter_scales(cfg: DictConfig) -> list[dict[str, Any]] | None:
 def validate_cfg(cfg: DictConfig) -> None:
     if get_model_cfg(cfg, "selective") is not None and cfg.model.encoder != "pure_rqf":
         raise ValueError("model.selective is supported only by Pure RQF")
+    if get_model_cfg(cfg, "selective") is not None:
+        prospective_tau = get_model_cfg(cfg, "prospective_tau")
+        validate_selective_tbptt_mode(
+            scan_grad_mode=str(cfg.training.scan_grad_mode),
+            tbptt_delayed_input_mode=str(
+                getattr(cfg.training, "tbptt_delayed_input_mode", "strict")
+            ),
+            prospective_input=bool(cfg.model.prospective_input),
+            prospective_tau=(as_container(prospective_tau)
+                             if OmegaConf.is_config(prospective_tau) else prospective_tau),
+        )
     if cfg.training.per_step_loss and cfg.training.scan_grad_mode != "tbptt1":
         raise ValueError(
             "per_step_loss=true is used for the spatial-only backpropagation / "

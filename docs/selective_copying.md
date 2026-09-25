@@ -17,7 +17,8 @@ and accuracy use only the recall suffix, during both training and evaluation.
 | Initialization | Log-uniform theta, critical gamma (Q=1), forward-preserving W |
 | Frequency initialization duration | 4096, retained even in shorter smoke runs |
 | Selectors | Raw previous-layer real/imaginary output |
-| Controls | Sigmoid gamma, signed write, four frequency groups with multipliers [1/4, 4] |
+| Controls | Sigmoid gamma, bounded sigmoid write (maximum 2), four frequency groups with multipliers [1/4, 4] |
+| Controller bounds | Resting gamma stays 0.001 of the band width inside each edge; effective warped frequency is capped to the band and Nyquist |
 | Activation | Split ReLU between layers; raw final state |
 | Readout | Real/imaginary features → He-normal 256-unit ReLU MLP → logits |
 | Parameters | 119,184 real trainable parameters |

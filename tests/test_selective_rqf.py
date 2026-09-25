@@ -2,6 +2,7 @@
 
 import copy
 import itertools
+import math
 import os
 from pathlib import Path
 import unittest
@@ -9,6 +10,7 @@ import unittest
 import torch
 
 from rqf_models.backbones.rqf import PureRQFEncoder, SelectiveRQFConfig
+from rqf_models.backbones.rqf.selective import SelectiveController
 from rqf_models.ops.selective_scan import selective_coefficients, reference_layer_scan
 
 
@@ -18,6 +20,7 @@ VARIANTS = [
     {"gamma_link": "log_shift"},
     {"gamma_link": "log_shift", "gamma_features": "modulus"},
     {"gamma_control": False, "write_control": True},
+    {"gamma_control": False, "write_control": True, "write_link": "affine"},
     {"gamma_control": False, "frequency_warp": "global"},
     {"gamma_control": False, "frequency_warp": "grouped", "num_groups": 3},
     {"frequency_warp": "grouped", "num_groups": 3, "write_control": True},
@@ -48,6 +51,12 @@ for gamma, write, warp in itertools.product(
                 gamma_features=feature,
             )
         )
+
+# Preserve the historical write link in the independent recurrence/gradient suite.
+CONTROLLER_CASES.extend([
+    {"gamma_control": False, "write_control": True, "write_link": "affine"},
+    {"write_control": True, "write_link": "affine", "frequency_warp": "global"},
+])
 
 
 def make_model(selective=None, *, active=False, **kwargs):
@@ -114,16 +123,33 @@ def oracle(model, x):
                     )
                 else:
                     span = r._max_gamma - r._min_gamma
-                    eps = torch.finfo(gamma.dtype).eps
                     resting = (gamma - r._min_gamma) / span
-                    interior = resting.clamp(eps, 1 - eps)
-                    bias = torch.logit(resting + (interior - resting).detach())
+                    if c.config.gamma_edge == "st_clamp":
+                        eps = torch.finfo(gamma.dtype).eps
+                        interior = resting.clamp(eps, 1 - eps)
+                        resting = resting + (interior - resting).detach()
+                    bias = torch.logit(resting)
                     gamma = r._min_gamma + span * torch.sigmoid(bias + offset)
             theta = r.log_theta.exp()
             if c.W_delta is not None:
                 delta = c.config.max_log_scale * (v @ c.W_delta.T).tanh()
                 theta = theta * delta[:, c.warp_groups].exp()
-            gate = 1 if c.W_write is None else 1 + v @ c.W_write.T
+                if c.config.warp_bound == "band":
+                    lower = 2 * math.pi * r._min_freq * r.tau
+                    upper = torch.minimum(
+                        2 * math.pi * r._max_freq * r.tau,
+                        math.pi * r.tau / r.dt,
+                    )
+                    theta = theta.clamp(lower, upper)
+            gate = 1
+            if c.W_write is not None:
+                logits = v @ c.W_write.T
+                gate = (
+                    c.config.write_max
+                    * torch.sigmoid(logits - math.log(c.config.write_max - 1))
+                    if c.config.write_link == "sigmoid"
+                    else 1 + logits
+                )
             a = (-gamma + 1j * (1 - gamma) * theta) * (r.dt / r.tau)
             A = a.exp()
             small = a.abs() < 1e-4
@@ -376,7 +402,7 @@ class SelectiveReferenceTest(unittest.TestCase):
         # d gamma / d log_gamma there, not a dead logit clamp.
         x = torch.randn(2, 9, 3)
         grads = {}
-        for label, selective in (("static", None), ("sigmoid", {})):
+        for label, selective in (("static", None), ("sigmoid", {"gamma_edge": "st_clamp"})):
             net = make_model(selective, num_layers=1)
             rqf = net.blocks[0].rqf_fwd
             with torch.no_grad():
@@ -393,9 +419,117 @@ class SelectiveReferenceTest(unittest.TestCase):
             grads["sigmoid"], grads["static"], rtol=1e-3, atol=1e-6
         )
 
+    def test_interior_gamma_edges_bound_nonzero_offset_gradients(self):
+        block = make_model({}, num_layers=1).blocks[0].double()
+        r, c = block.rqf_fwd, block.selector
+        margin = c.config.gamma_edge_margin
+        span = r._max_gamma - r._min_gamma
+        normalized = (r.gamma - r._min_gamma) / span
+        self.assertTrue(bool((normalized >= margin - 1e-6).all()))
+        self.assertTrue(bool((normalized <= 1 - margin + 1e-6).all()))
+        source = torch.ones(5, 1, 1, dtype=torch.complex128)
+        for upper in (False, True):
+            with self.subTest(upper=upper):
+                with torch.no_grad():
+                    r.log_gamma.fill_(50.0 if upper else -50.0)
+                    c.W_gamma.zero_()
+                    c.W_gamma[:, 0] = (-1 if upper else 1) * math.log((1 - margin) / margin)
+                r.clamp_parameters()
+                normalized = (r.gamma - r._min_gamma) / span
+                torch.testing.assert_close(
+                    normalized, torch.full_like(normalized, 1 - margin if upper else margin),
+                    rtol=1e-10, atol=1e-12,
+                )
+                data = inputs_for(block, source)
+                A = selective_coefficients(data)[0]
+                effective_gamma = -A.abs().log() / data.step[:, None, None]
+                base_grad, head_grad = torch.autograd.grad(
+                    effective_gamma.sum(), (r.log_gamma, c.W_gamma)
+                )
+                ratio = base_grad / r.gamma
+                # At the shifted midpoint this reaches the analytic maximum,
+                # about 250.25 for margin=.001, without killing either head.
+                cap = 1 / (4 * margin * (1 - margin))
+                self.assertTrue(bool(torch.isfinite(base_grad).all()))
+                self.assertTrue(bool((ratio <= cap * (1 + 1e-8)).all()))
+                self.assertGreater(float(ratio.min()), 200.0)
+                self.assertGreater(float(head_grad.abs().sum()), 0.0)
+
+    def test_frequency_band_clips_both_base_and_head_derivatives(self):
+        block = make_model(
+            {"gamma_control": False, "frequency_warp": "global", "max_log_scale": math.log(4)},
+            num_layers=1, samp_frequency=4.0,
+        ).blocks[0].double()
+        r, c = block.rqf_fwd, block.selector
+        lower = 2 * math.pi * r._min_freq * r.tau
+        upper = torch.minimum(2 * math.pi * r._max_freq * r.tau, math.pi * r.tau / r.dt)
+        self.assertTrue(r.theta_nyquist_bound)
+        self.assertTrue(bool((r.theta <= upper * (1 + 1e-6)).all()))
+        with torch.no_grad():
+            r.log_theta.fill_(50)
+        r.clamp_parameters()
+        torch.testing.assert_close(r.theta, upper)
+        with torch.no_grad():
+            r.log_theta.copy_((lower * upper).sqrt().log())
+            r.log_gamma.fill_(math.log(0.2))
+            c.W_delta.zero_()
+            c.W_delta[:, 0] = 1
+        source = torch.zeros(5, 1, 3, dtype=torch.complex128)
+        source[0, 0] = torch.tensor([-2.0, 0.1, 2.0], dtype=torch.float64)
+        data = inputs_for(block, source)
+        A = selective_coefficients(data)[0]
+        effective_theta = A.angle() / ((1 - r.gamma) * data.step)[:, None, None]
+        expected = (r.theta[:, None, None] * (math.log(4) * source[:1].real.tanh()).exp()).clamp(
+            lower[:, None, None], upper[:, None, None]
+        )
+        torch.testing.assert_close(effective_theta, expected)
+        self.assertTrue(bool((A.angle().abs() <= math.pi).all()))
+        for t in range(3):
+            gradients = torch.autograd.grad(A[..., t].imag.sum(), (r.log_theta, c.W_delta), retain_graph=True)
+            for gradient in gradients:
+                if t == 1:
+                    self.assertGreater(float(gradient.abs().sum()), 0.0)
+                else:
+                    torch.testing.assert_close(gradient, torch.zeros_like(gradient), rtol=0, atol=0)
+        legacy = make_model(
+            {"gamma_control": False, "frequency_warp": "global", "warp_bound": "none"},
+            num_layers=1, samp_frequency=4.0,
+        ).blocks[0].rqf_fwd
+        self.assertFalse(legacy.theta_nyquist_bound)
+        with torch.no_grad():
+            legacy.log_theta.fill_(50)
+        legacy.clamp_parameters()
+        torch.testing.assert_close(legacy.theta, 2 * math.pi * legacy._max_freq * legacy.tau)
+
+    def test_enabled_heads_train_with_frozen_base_and_explicit_freeze_is_respected(self):
+        net = make_model(None, num_layers=1)
+        block = net.blocks[0]
+        block.rqf_fwd.requires_grad_(False)
+        block.W.requires_grad_(False)
+        block.selector = SelectiveController(
+            block.W.shape[1], block.rqf_fwd,
+            SelectiveRQFConfig(write_control=True, frequency_warp="global"),
+        )
+        self.assertTrue(all(p.requires_grad for p in block.selector.parameters()))
+        source = torch.randn(5, 2, 7, dtype=torch.complex64, requires_grad=True)
+        coefficients = selective_coefficients(inputs_for(block, source))
+        sum(value.real.sum() + 0.3 * value.imag.sum() for value in coefficients).backward()
+        for name, head in block.selector.named_parameters():
+            self.assertIsNotNone(head.grad, name)
+            self.assertTrue(bool(torch.isfinite(head.grad).all()), name)
+            self.assertGreater(float(head.grad.abs().sum()), 0, name)
+        self.assertTrue(all(p.grad is None for p in block.rqf_fwd.parameters()))
+        block.selector.zero_grad(set_to_none=True)
+        block.selector.requires_grad_(False)
+        source = source.detach().requires_grad_()
+        selective_coefficients(inputs_for(block, source))[0].real.sum().backward()
+        self.assertTrue(all(p.grad is None for p in block.selector.parameters()))
+        self.assertIsNotNone(source.grad)
+
     def test_signed_gate_current_interval_and_zero_gate_derivative(self):
         block = make_model(
-            {"gamma_control": False, "write_control": True}, num_layers=1
+            {"gamma_control": False, "write_control": True, "write_link": "affine"},
+            num_layers=1,
         ).blocks[0]
         with torch.no_grad():
             block.selector.W_write.zero_()
@@ -416,6 +550,48 @@ class SelectiveReferenceTest(unittest.TestCase):
         torch.testing.assert_close(y[..., 1], A[..., 1] * y[..., 0])
         grad = torch.autograd.grad(y[..., 1].real.sum(), block.selector.W_write)[0]
         self.assertGreater(float(grad.abs().sum()), 0.0)
+
+    def test_sigmoid_write_bounds_unit_gain_and_both_taps(self):
+        for maximum, prospective in itertools.product((1.25, 2.0, 4.0), (False, True)):
+            with self.subTest(maximum=maximum, prospective=prospective):
+                block = make_model(
+                    {"gamma_control": False, "write_control": True, "write_max": maximum},
+                    num_layers=1,
+                    prospective_input=prospective,
+                ).blocks[0]
+                with torch.no_grad():
+                    block.selector.W_write[:, 0] = 1.0
+                source = torch.zeros(5, 1, 5, dtype=torch.complex64)
+                source[0, 0] = torch.tensor([-1000.0, -2.0, 0.0, 2.0, 1000.0])
+                data = inputs_for(block, source)
+                A, p, n = selective_coefficients(data)
+                options = list(data.options)
+                options[2] = False
+                base_A, base_p, base_n = selective_coefficients(
+                    data._replace(options=tuple(options))
+                )
+                gate = maximum * torch.sigmoid(source[0].real - math.log(maximum - 1))
+                torch.testing.assert_close(A, base_A, rtol=0, atol=0)
+                torch.testing.assert_close(p, base_p * gate)
+                torch.testing.assert_close(n, base_n * gate)
+                torch.testing.assert_close(gate[..., 2], torch.ones(1))
+                self.assertEqual(float(gate.min()), 0.0)
+                self.assertEqual(float(gate.max()), maximum)
+                derivative = torch.autograd.grad(p.real.sum(), data.write_logits)[0]
+                torch.testing.assert_close(
+                    derivative, base_p.real * gate * (1 - gate / maximum)
+                )
+
+    def test_zero_sigmoid_write_heads_preserve_static_forward(self):
+        x = torch.randn(2, 9, 3)
+        for maximum, prospective in itertools.product((1.25, 2.0, 4.0), (False, True)):
+            with self.subTest(maximum=maximum, prospective=prospective):
+                bounded = make_model(
+                    {"gamma_control": False, "write_control": True, "write_max": maximum},
+                    prospective_input=prospective,
+                )
+                static = make_model(prospective_input=prospective)
+                torch.testing.assert_close(bounded(x), static(x), rtol=3e-5, atol=3e-6)
 
     def test_float64_coefficient_and_controller_gradcheck(self):
         for variant, mode in itertools.product(CONTROLLER_CASES, ("tau", "gamma")):
@@ -452,7 +628,8 @@ class SelectiveReferenceTest(unittest.TestCase):
         data = inputs_for(block, torch.zeros(5, 1, 2, dtype=torch.complex128))
         # Independent gamma/theta leaves exercise exprel at exactly zero.
         data = data._replace(
-            options=(False, False, False, False, 0.2, 0.2, True, False),
+            options=(False, False, False, False, 0.2, 0.2, True, False,
+                     False, 2.0, 0.0, False),
             bias=torch.zeros(5, dtype=torch.float64, requires_grad=True),
             theta=torch.zeros(5, dtype=torch.float64, requires_grad=True),
         )
@@ -473,7 +650,18 @@ class SelectiveIntegrationTest(unittest.TestCase):
             {"gamma_control": False},
             {"gamma_link": "bad"},
             {"gamma_features": "bad"},
+            {"gamma_edge": "straight_through"},
+            {"gamma_edge_margin": 0.0},
+            {"gamma_edge_margin": 0.5},
+            {"gamma_edge_margin": float("nan")},
+            {"gamma_edge_margin": float("inf")},
+            {"write_link": "tanh"},
+            {"write_max": 1.0},
+            {"write_max": 0.0},
+            {"write_max": float("inf")},
+            {"write_max": float("nan")},
             {"max_log_scale": float("nan")},
+            {"warp_bound": "nyquist_only"},
             {"gamma_control": False, "gamma_features": "modulus"},
             {"input_source": "previous_time"},
         ):
@@ -492,9 +680,19 @@ class SelectiveIntegrationTest(unittest.TestCase):
         for options in (
             {"frequency_warp": "grouped", "num_groups": 6},
             {"gamma_link": "log_shift", "gamma_max_log_scale": 30.0},
+            {"gamma_edge_margin": 1e-30},
         ):
             with self.assertRaises(ValueError):
                 make_model(options)
+
+    def test_frequency_warp_rejects_empty_nyquist_band(self):
+        with self.assertRaisesRegex(ValueError, "Nyquist|frequency band"):
+            make_model({"frequency_warp": "global"}, samp_frequency=1.0, seq_duration=1.0)
+        legacy = make_model(
+            {"frequency_warp": "global", "warp_bound": "none"},
+            samp_frequency=1.0, seq_duration=1.0,
+        )
+        self.assertFalse(legacy.blocks[0].rqf_fwd.theta_nyquist_bound)
 
     def test_config_optimizer_and_static_build(self):
         from hydra import compose, initialize_config_dir
@@ -505,6 +703,11 @@ class SelectiveIntegrationTest(unittest.TestCase):
             for recipe in ("pure_rqf_paper", "pure_rqf_selective"):
                 cfg = compose(config_name="config", overrides=["model=" + recipe])
                 if recipe == "pure_rqf_selective":
+                    self.assertEqual(cfg.model.selective.write_link, "sigmoid")
+                    self.assertEqual(cfg.model.selective.write_max, 2.0)
+                    self.assertEqual(cfg.model.selective.gamma_edge, "interior_clamp")
+                    self.assertEqual(cfg.model.selective.gamma_edge_margin, 0.001)
+                    self.assertEqual(cfg.model.selective.warp_bound, "band")
                     cfg.model.selective.write_control = True
                     cfg.model.selective.frequency_warp = "grouped"
                 validate_cfg(cfg)
@@ -585,6 +788,96 @@ class SelectiveIntegrationTest(unittest.TestCase):
         legacy = make_model()
         legacy.load_state_dict(copy.deepcopy(legacy.state_dict()), strict=True)
         self.assertFalse(any("selector" in k for k in legacy.state_dict()))
+
+    def test_write_link_checkpoint_compatibility(self):
+        affine = make_model(dict(VARIANTS[-1], write_link="affine"), active=True)
+        legacy = copy.deepcopy(affine.state_dict())
+        for name, value in legacy.items():
+            if name.endswith("selector._extra_state"):
+                value.pop("write_link")
+                value.pop("write_max")
+        restored = make_model(dict(VARIANTS[-1], write_link="affine", write_max=4.0))
+        restored.load_state_dict(legacy, strict=True)
+        x = torch.randn(2, 5, 3)
+        torch.testing.assert_close(affine(x), restored(x), rtol=0, atol=0)
+        with self.assertRaisesRegex(ValueError, "settings"):
+            make_model(VARIANTS[-1]).load_state_dict(legacy)
+
+        bounded = make_model(dict(VARIANTS[-1], write_max=3.0), active=True)
+        state = copy.deepcopy(bounded.state_dict())
+        for changed in (dict(VARIANTS[-1], write_max=2.0),
+                        dict(VARIANTS[-1], write_link="affine")):
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "settings"):
+                make_model(changed).load_state_dict(state)
+        matching = make_model(dict(VARIANTS[-1], write_max=3.0))
+        matching.load_state_dict(state, strict=True)
+        torch.testing.assert_close(bounded(x), matching(x), rtol=0, atol=0)
+
+        no_write = make_model({"write_link": "affine", "write_max": 4.0})
+        make_model({}).load_state_dict(no_write.state_dict(), strict=True)
+
+    def test_gamma_and_warp_checkpoint_legacy_mismatch_and_inert_options(self):
+        historical = dict(write_control=True, write_link="affine", frequency_warp="global",
+                          gamma_edge="st_clamp", warp_bound="none")
+        original = make_model(historical, active=True)
+        legacy = copy.deepcopy(original.state_dict())
+        for name, value in legacy.items():
+            if name.endswith("selector._extra_state"):
+                for key in ("write_link", "write_max", "gamma_edge", "gamma_edge_margin", "warp_bound"):
+                    value.pop(key)
+        restored = make_model(historical)
+        restored.load_state_dict(legacy, strict=True)
+        x = torch.randn(2, 5, 3)
+        torch.testing.assert_close(original(x), restored(x), rtol=0, atol=0)
+        for changed in (dict(historical, gamma_edge="interior_clamp"),
+                        dict(historical, warp_bound="band")):
+            with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "settings"):
+                make_model(changed).load_state_dict(legacy, strict=True)
+        interior = make_model({})
+        with self.assertRaisesRegex(ValueError, "settings"):
+            make_model({"gamma_edge_margin": 0.01}).load_state_dict(interior.state_dict())
+        for left, right in (
+            ({"gamma_control": False, "write_control": True, "gamma_edge": "st_clamp", "warp_bound": "none"},
+             {"gamma_control": False, "write_control": True}),
+            ({"gamma_link": "log_shift", "gamma_edge": "st_clamp"}, {"gamma_link": "log_shift"}),
+            ({"gamma_edge": "st_clamp", "gamma_edge_margin": 0.01}, {"gamma_edge": "st_clamp"}),
+            ({"warp_bound": "none"}, {}),
+        ):
+            with self.subTest(left=left, right=right):
+                source, target = make_model(left, active=True), make_model(right)
+                target.load_state_dict(source.state_dict(), strict=True)
+                torch.testing.assert_close(source(x), target(x), rtol=0, atol=0)
+        inactive = make_model({"gamma_control": False, "write_control": True}).blocks[0].rqf_fwd
+        self.assertEqual(inactive.gamma_edge_margin, 0.0)
+        self.assertFalse(inactive.theta_nyquist_bound)
+
+    def test_evaluation_restores_saved_selective_settings_before_building_model(self):
+        from evaluate_checkpoint import checkpoint_overrides
+        from hydra import compose, initialize_config_dir
+        from train import build_model
+
+        config_dir = str(Path(__file__).resolve().parents[1] / "configs")
+        for saved, expected_link, expected_max, expected_edge, expected_bound in (
+            ({"write_control": True}, "affine", 2.0, "st_clamp", "none"),
+            ({"write_control": True, "write_link": "sigmoid", "write_max": 3.0},
+             "sigmoid", 3.0, "st_clamp", "none"),
+            ({"write_control": True, "write_link": "sigmoid", "gamma_edge": "interior_clamp",
+              "gamma_edge_margin": 0.002, "warp_bound": "band"},
+             "sigmoid", 2.0, "interior_clamp", "band"),
+        ):
+            with self.subTest(saved=saved):
+                checkpoint = {
+                    "hydra_overrides": ["+experiment=selective_copying"],
+                    "cfg": {"model": {"selective": saved}},
+                }
+                with initialize_config_dir(version_base=None, config_dir=config_dir):
+                    cfg = compose(config_name="config", overrides=checkpoint_overrides(checkpoint))
+                model = build_model(cfg)
+                self.assertEqual(model.encoder.selective.write_link, expected_link)
+                self.assertEqual(model.encoder.selective.write_max, expected_max)
+                self.assertEqual(model.encoder.selective.gamma_edge, expected_edge)
+                self.assertEqual(model.encoder.selective.warp_bound, expected_bound)
+                self.assertEqual(model.encoder.selective.gamma_edge_margin, saved.get("gamma_edge_margin", 0.001))
 
 
 @unittest.skipUnless(torch.backends.mps.is_available(), "requires MPS")

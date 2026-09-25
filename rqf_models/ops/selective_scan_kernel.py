@@ -25,6 +25,8 @@ def _controller(
     Span,
     Step,
     Horizon,
+    ThetaLo,
+    ThetaHi,
     f,
     b,
     t,
@@ -37,6 +39,10 @@ def _controller(
     LOG_SHIFT: tl.constexpr,
     GAMMA_SCALE: tl.constexpr,
     WARP_SCALE: tl.constexpr,
+    WRITE_SIGMOID: tl.constexpr,
+    WRITE_MAX: tl.constexpr,
+    WRITE_BIAS: tl.constexpr,
+    BOUND_WARP: tl.constexpr,
 ):
     gamma = tl.load(Bias + f) + tl.full(t.shape, 0.0, tl.float32)
     sig = tl.full(t.shape, 0.0, tl.float32)
@@ -54,9 +60,15 @@ def _controller(
         group = tl.load(Groups + f)
         warp = libdevice.tanh(tl.load(D + (group * B + b) * T + t, mask, 0.0))
         theta *= tl.exp(WARP_SCALE * warp)
+        if BOUND_WARP:
+            theta = tl.minimum(tl.maximum(theta, tl.load(ThetaLo + f)), tl.load(ThetaHi + f))
     gate = tl.full(t.shape, 1.0, tl.float32)
     if HAS_WRITE:
-        gate += tl.load(W + (f * B + b) * T + t, mask, 0.0)
+        write = tl.load(W + (f * B + b) * T + t, mask, 0.0)
+        if WRITE_SIGMOID:
+            gate = WRITE_MAX * tl.sigmoid(write + WRITE_BIAS)
+        else:
+            gate += write
     return gamma, theta, gate, sig, warp, tl.load(Step + f), tl.load(Horizon + f)
 
 
@@ -153,6 +165,8 @@ def _forward(
     Span,
     Step,
     Horizon,
+    ThetaLo,
+    ThetaHi,
     Raw,
     Act,
     Entries,
@@ -168,6 +182,10 @@ def _forward(
     WARP_SCALE: tl.constexpr,
     PROSPECTIVE: tl.constexpr,
     GAMMA_HORIZON: tl.constexpr,
+    WRITE_SIGMOID: tl.constexpr,
+    WRITE_MAX: tl.constexpr,
+    WRITE_BIAS: tl.constexpr,
+    BOUND_WARP: tl.constexpr,
     ACTIVATE: tl.constexpr,
     WRITE_RAW: tl.constexpr,
 ):
@@ -191,6 +209,8 @@ def _forward(
             Span,
             Step,
             Horizon,
+            ThetaLo,
+            ThetaHi,
             f,
             b,
             t,
@@ -198,6 +218,7 @@ def _forward(
             T,
             mask,
             HAS_GAMMA, HAS_WARP, HAS_WRITE, LOG_SHIFT, GAMMA_SCALE, WARP_SCALE,
+            WRITE_SIGMOID, WRITE_MAX, WRITE_BIAS, BOUND_WARP,
         )
         ar, ai, pr, pi, nr, ni = _coefficients(g, th, h, horizon, PROSPECTIVE, GAMMA_HORIZON)
         pr, pi, nr, ni = gate * pr, gate * pi, gate * nr, gate * ni
@@ -239,6 +260,8 @@ def _backward(
     Span,
     Step,
     Horizon,
+    ThetaLo,
+    ThetaHi,
     Entries,
     GY,
     GX,
@@ -261,6 +284,10 @@ def _backward(
     WARP_SCALE: tl.constexpr,
     PROSPECTIVE: tl.constexpr,
     GAMMA_HORIZON: tl.constexpr,
+    WRITE_SIGMOID: tl.constexpr,
+    WRITE_MAX: tl.constexpr,
+    WRITE_BIAS: tl.constexpr,
+    BOUND_WARP: tl.constexpr,
     ACTIVATE: tl.constexpr,
     HAS_GY: tl.constexpr,
     HAS_GX: tl.constexpr,
@@ -287,6 +314,8 @@ def _backward(
             Span,
             Step,
             Horizon,
+            ThetaLo,
+            ThetaHi,
             f,
             b,
             t,
@@ -294,6 +323,7 @@ def _backward(
             T,
             mask,
             HAS_GAMMA, HAS_WARP, HAS_WRITE, LOG_SHIFT, GAMMA_SCALE, WARP_SCALE,
+            WRITE_SIGMOID, WRITE_MAX, WRITE_BIAS, BOUND_WARP,
         )
         ar, ai, bpr, bpi, bnr, bni = _coefficients(g, th, h, horizon, PROSPECTIVE, GAMMA_HORIZON)
         pr, pi, nr, ni = gate * bpr, gate * bpi, gate * bnr, gate * bni
@@ -344,6 +374,8 @@ def _backward(
             Span,
             Step,
             Horizon,
+            ThetaLo,
+            ThetaHi,
             f,
             b,
             next_t,
@@ -351,6 +383,7 @@ def _backward(
             T,
             next_t < T,
             HAS_GAMMA, HAS_WARP, HAS_WRITE, LOG_SHIFT, GAMMA_SCALE, WARP_SCALE,
+            WRITE_SIGMOID, WRITE_MAX, WRITE_BIAS, BOUND_WARP,
         )
         anr, ani, _, _, nnr, nni = _coefficients(gn, thn, hn, rn, PROSPECTIVE, GAMMA_HORIZON)
         nx = tl.minimum(ix + 1, C - 1)
@@ -388,7 +421,10 @@ def _backward(
         dpr, dpi = zr * dr + zi * di, zr * di - zi * dr
         dnr, dni = zpr * dr + zpi * di, zpr * di - zpi * dr
         if HAS_WRITE:
-            tl.store(DW + base, bpr * dpr + bpi * dpi + bnr * dnr + bni * dni, mask)
+            dgate = bpr * dpr + bpi * dpi + bnr * dnr + bni * dni
+            if WRITE_SIGMOID:
+                dgate *= gate * (1.0 - gate / WRITE_MAX)
+            tl.store(DW + base, dgate, mask)
         dg, dth = _coefficient_vjp(
             g,
             th,
@@ -410,8 +446,16 @@ def _backward(
                 dg *= tl.load(Span + f) * sig * (1.0 - sig)
                 tl.store(DG + base, dg, mask)
         if HAS_WARP:
+            warp_scale = tl.exp(WARP_SCALE * warp)
+            if BOUND_WARP:
+                unclamped_theta = tl.load(Theta + f) * warp_scale
+                # torch.clamp propagates the input gradient at both exact edges.
+                inside = (unclamped_theta >= tl.load(ThetaLo + f)) & (
+                    unclamped_theta <= tl.load(ThetaHi + f)
+                )
+                dth = tl.where(inside, dth, 0.0)
             tl.store(DD + base, dth * th * WARP_SCALE * (1.0 - warp * warp), mask)
-            dth *= tl.exp(WARP_SCALE * warp)
+            dth *= warp_scale
         bias_sum += tl.sum(tl.where(mask, dg, 0.0), axis=0)
         theta_sum += tl.sum(tl.where(mask, dth, 0.0), axis=0)
     tl.store(Partial + row, bias_sum)

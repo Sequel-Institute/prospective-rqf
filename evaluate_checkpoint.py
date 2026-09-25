@@ -31,10 +31,27 @@ def checkpoint_state_dict(checkpoint: dict[str, Any]) -> dict[str, torch.Tensor]
 def checkpoint_overrides(checkpoint: dict[str, Any]) -> list[str]:
     overrides = checkpoint.get("hydra_overrides", [])
     if overrides is None:
-        return []
+        overrides = []
     if not isinstance(overrides, list):
         raise TypeError("checkpoint hydra_overrides must be a list")
-    return [str(item) for item in overrides]
+    overrides = [str(item) for item in overrides]
+    selective = checkpoint.get("cfg", {}).get("model", {}).get("selective")
+    if selective is not None and selective.get("write_control", False):
+        # Preset defaults can change after a checkpoint was trained. Missing
+        # write_link in saved configuration denotes the original affine gain.
+        overrides += [
+            f"++model.selective.write_link={selective.get('write_link', 'affine')}",
+            f"++model.selective.write_max={selective.get('write_max', 2.0)}",
+        ]
+    if selective is not None:
+        # Missing boundary policies identify checkpoints trained before these
+        # defaults existed, including sigmoid-write-only checkpoints.
+        overrides += [
+            f"++model.selective.gamma_edge={selective.get('gamma_edge', 'st_clamp')}",
+            f"++model.selective.gamma_edge_margin={selective.get('gamma_edge_margin', 1e-3)}",
+            f"++model.selective.warp_bound={selective.get('warp_bound', 'none')}",
+        ]
+    return overrides
 
 
 def parse_args() -> argparse.Namespace:

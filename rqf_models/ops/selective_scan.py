@@ -18,6 +18,8 @@ class SelectiveScanInputs(NamedTuple):
     span: Tensor
     step: Tensor
     horizon: Tensor
+    theta_minimum: Tensor
+    theta_maximum: Tensor
     options: tuple
 
 
@@ -25,7 +27,10 @@ def selective_coefficients(
     inputs: SelectiveScanInputs,
 ) -> tuple[Tensor, Tensor, Tensor]:
     """Explicit ``(A, gated p, gated n)`` in ``(F,B,T)`` layout."""
-    gl, dl, wl, bias, theta, groups, minimum, span, step, horizon, opt = inputs
+    (
+        gl, dl, wl, bias, theta, groups, minimum, span, step, horizon,
+        theta_minimum, theta_maximum, opt,
+    ) = inputs
     gamma = bias[:, None, None]
     if opt[0]:
         gamma = (
@@ -37,6 +42,10 @@ def selective_coefficients(
     theta = theta[:, None, None]
     if opt[1]:
         theta = theta * torch.exp(opt[5] * dl.tanh().index_select(0, groups))
+        if opt[11]:
+            theta = torch.clamp(
+                theta, theta_minimum[:, None, None], theta_maximum[:, None, None]
+            )
     eta = step[:, None, None]
     a = torch.complex(-gamma, (1 - gamma) * theta) * eta
     A = a.exp()
@@ -52,7 +61,8 @@ def selective_coefficients(
         extra = ratio * gamma * A
         p, n = p + extra, -extra
     if opt[2]:
-        p, n = p * (1 + wl), n * (1 + wl)
+        gate = opt[9] * torch.sigmoid(wl + opt[10]) if opt[8] else 1 + wl
+        p, n = p * gate, n * gate
     # Frequency-only and write-only controllers may leave A independent of time.
     shape = (bias.numel(), gl.shape[1], gl.shape[2])
     return A.expand(shape), p.expand(shape), n.expand(shape)
@@ -142,6 +152,8 @@ class _SelectiveLayerScan(torch.autograd.Function):
             dw,
             dbias,
             dtheta,
+            None,
+            None,
             None,
             None,
             None,
