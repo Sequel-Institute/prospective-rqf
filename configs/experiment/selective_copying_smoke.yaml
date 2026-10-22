@@ -1,0 +1,15 @@
+# @package _global_
+# Same model and optimizer as selective_copying; a small CPU execution check.
+defaults:
+  - selective_copying
+  - _self_
+
+device: cpu
+data:
+  sequence_length: 128
+  n_train: 16
+  n_val: 8
+  n_test: 8
+training:
+  batch_size: 4
+  max_epochs: 2
