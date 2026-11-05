@@ -24,6 +24,7 @@ from rqf_models.cells.state import ORGaNICsState
 from rqf_models.backbones.rqf import PureRQFEncoder, S4RQFEncoder
 from rqf_models.backbones.rqf.pure import validate_selective_tbptt_mode
 from rqf_models.backbones.s5 import S5Encoder
+from rqf_models.data.pathfinder import PathfinderDataSpec
 from rqf_models.data.selective_copying import SelectiveCopyingDataSpec
 
 
@@ -78,6 +79,9 @@ class ComplexReadoutClassifier(nn.Module):
     layer starts near zero so early logits are pooling-neutral. Mirrors the
     SequenceClassifier per_step_loss contract. With ``recall_steps``, read only
     the final recall states and retain token logits during training and eval.
+    ``hidden_init="he_normal"`` draws the hidden layer He-normal with zero
+    bias (always the case with ``recall_steps``); ``"default"`` keeps the
+    PyTorch ``nn.Linear`` initialization.
     """
 
     def __init__(
@@ -89,8 +93,13 @@ class ComplexReadoutClassifier(nn.Module):
         dropout: float,
         per_step_loss: bool,
         recall_steps: int | None = None,
+        hidden_init: str = "default",
     ) -> None:
         super().__init__()
+        if hidden_init not in {"default", "he_normal"}:
+            raise ValueError(f"hidden_init must be 'default' or 'he_normal', got {hidden_init!r}")
+        if hidden_init == "he_normal" and hidden_dims is None:
+            raise ValueError("hidden_init='he_normal' requires a hidden layer (hidden_dims)")
         self.encoder = encoder
         self.per_step_loss = per_step_loss
         self.recall_steps = recall_steps
@@ -110,8 +119,8 @@ class ComplexReadoutClassifier(nn.Module):
                 nn.Dropout(dropout),
                 out,
             )
-            if recall_steps is not None:
-                # He-normal initialization for the recall readout's hidden layer.
+            if recall_steps is not None or hidden_init == "he_normal":
+                # He-normal initialization for the readout's ReLU hidden layer.
                 nn.init.normal_(self.head[0].weight, std=(2.0 / in_dim) ** 0.5)
                 nn.init.zeros_(self.head[0].bias)
 
@@ -460,10 +469,15 @@ def validate_cfg(cfg: DictConfig) -> None:
             prospective_tau=(as_container(prospective_tau)
                              if OmegaConf.is_config(prospective_tau) else prospective_tau),
         )
-    if cfg.training.per_step_loss and cfg.training.scan_grad_mode != "tbptt1":
+    if (cfg.training.per_step_loss and cfg.training.scan_grad_mode != "tbptt1"
+            and get_model_cfg(cfg, "readout") != "real_imag_mlp"):
+        # The per-timestep real/imag readout also trains with full BPTT and a
+        # per-step loss (the Path-X recipe); other readouts keep the per-step
+        # loss for the spatial-only TBPTT(1) condition.
         raise ValueError(
             "per_step_loss=true is used for the spatial-only backpropagation / "
-            "TBPTT(1) condition and requires training.scan_grad_mode=tbptt1"
+            "TBPTT(1) condition and requires training.scan_grad_mode=tbptt1 "
+            "unless model.readout=real_imag_mlp"
         )
     if cfg.data.name == "selective_copying":
         if (cfg.model.encoder != "pure_rqf"
@@ -473,6 +487,11 @@ def validate_cfg(cfg: DictConfig) -> None:
             raise ValueError("selective copying requires Pure RQF, real_imag_mlp, and full BPTT")
         if len(cfg.data.classes) != int(cfg.data.feature_dim):
             raise ValueError("selective copying classes must match the input vocabulary")
+    if cfg.data.name == "pathfinder":
+        if int(cfg.data.sequence_length) != int(cfg.data.resolution) ** 2:
+            raise ValueError("pathfinder sequence_length must equal resolution ** 2")
+        if int(cfg.data.feature_dim) != 1 or len(cfg.data.classes) != 2:
+            raise ValueError("pathfinder inputs have one feature and two classes")
     if cfg.training.get("optimizer", "adamw") not in {"adam", "adamw"}:
         raise ValueError("training.optimizer must be adam or adamw")
     if cfg.training.get("scheduler", "cosine") not in {"none", "cosine"}:
@@ -593,6 +612,7 @@ def build_model(cfg: DictConfig) -> nn.Module:
             dropout=float(cfg.model.classifier.dropout),
             per_step_loss=bool(cfg.training.per_step_loss),
             recall_steps=(int(cfg.data.n_memorize) if cfg.data.name == "selective_copying" else None),
+            hidden_init=str(cfg.model.classifier.get("hidden_init", "default")),
         )
     encoder, output_dims = build_encoder(cfg)
     return SequenceClassifier(
@@ -684,6 +704,19 @@ def build_datasets(cfg: DictConfig) -> tuple[Dataset, Dataset, Dataset]:
             n_val=int(cfg.data.n_val),
             n_test=int(cfg.data.n_test),
             seed=int(cfg.data.split_seed),
+        ).build()
+    if cfg.data.name == "pathfinder":
+        max_samples = cfg.data.max_samples_per_split
+        return PathfinderDataSpec(
+            root=str(cfg.data.root),
+            resolution=int(cfg.data.resolution),
+            difficulty=str(cfg.data.difficulty),
+            train_split=float(cfg.data.train_split),
+            val_split=float(cfg.data.val_split),
+            split_seed=int(cfg.data.split_seed),
+            normalize=bool(cfg.data.normalize),
+            verify_complete=bool(cfg.data.verify_complete),
+            max_samples_per_split=None if max_samples is None else int(max_samples),
         ).build()
     if cfg.data.use_synthetic:
         return (

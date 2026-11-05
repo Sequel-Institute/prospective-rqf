@@ -1,0 +1,16 @@
+# @package _global_
+# Same model and optimizer as pathx; a small CPU execution check on eight
+# Pathfinder-32 examples per split (T=1024, from the same LRA release).
+defaults:
+  - pathx
+  - _self_
+
+device: cpu
+data:
+  variant: pathfinder32
+  resolution: 32
+  sequence_length: 1024
+  max_samples_per_split: 8
+training:
+  batch_size: 4
+  max_epochs: 1
