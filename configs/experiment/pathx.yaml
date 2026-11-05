@@ -1,0 +1,42 @@
+# @package _global_
+# Six-layer prospective Pure RQF (64 complex RQFs per layer) on LRA Path-X,
+# trained for 300 epochs with full BPTT and a per-timestep cross-entropy.
+defaults:
+  - override /data: pathx
+  - override /model: pure_rqf_paper
+  - override /training: full_bptt
+
+seed: 0
+model:
+  depth: 6
+  hidden_width: 64
+  output_dims: 64
+  skip_connection: false
+  prospective_input: true
+  prospective_mode: tau
+  encoder_kwargs:
+    samp_frequency: 16384.0          # dt = 1/16384: one sequence spans 1 s
+    tau: 0.00030517578125            # 5 * dt
+    seq_duration: 6.283185307179586  # 2*pi s: init theta floor 2*pi*tau/T = 5/16384
+    filter_max_freq_factor: 0.25     # init theta ceiling 2*pi*0.25 = pi/2
+    input_projection: false
+    output_projection: false
+  classifier:
+    hidden_dims: 256
+    dropout: 0.0
+    hidden_init: he_normal
+
+training:
+  per_step_loss: true   # cross-entropy at every timestep; eval averages logits over time
+  batch_size: 64
+  max_epochs: 300
+  patience: 0
+  learning_rate: 0.003
+  rqf_lr_factor: 1.0
+  optimizer: adam
+  adam_eps: 0.0001
+  weight_decay: 0.0
+  scheduler: cosine
+  min_lr: 0.0
+  label_smoothing: 0.0
+  gradient_clip_val: 1.0

@@ -17,6 +17,7 @@ The code includes:
 - Hydra configs for raw waveform and MFCC Speech Commands inputs;
 - Hydra configs for full BPTT and spatial-only backpropagation;
 - [selective copying](docs/selective_copying.md) with a selective RQF training configuration and a CPU smoke configuration;
+- [LRA Path-X](docs/pathx.md) with a Pure RQF training configuration and a CPU smoke configuration;
 - a simple PyTorch training script.
 
 The paper tables were produced from five seeds. This review repository defaults to `seed=0` and exposes the same model/configuration axes so each reported configuration can be re-run directly.

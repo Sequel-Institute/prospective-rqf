@@ -1,0 +1,19 @@
+name: pathfinder
+variant: pathx
+# LRA Path-X: 128x128 Pathfinder images (curv_contour_length_14) raster-scanned
+# row-major into 16384 steps of one standardized grayscale feature.
+root: data              # holds lra_release/lra_release/pathfinder128/...
+resolution: 128
+difficulty: curv_contour_length_14
+sequence_length: 16384  # resolution ** 2
+feature_dim: 1
+classes: [disconnected, connected]
+train_split: 0.8
+val_split: 0.1
+split_seed: 42          # fixed S4-lineage split, independent of the training seed
+normalize: true         # scalar z-score with train-split statistics
+verify_complete: true   # require the official 200,000 examples
+max_samples_per_split: null
+batch_size: ${training.batch_size}
+drop_last_train: true
+drop_last_eval: false
